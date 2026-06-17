@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#2563eb">
+    <title>社区避难所物资签到系统</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div id="app">
+        <header class="app-header">
+            <div class="header-content">
+                <h1 id="page-title">物资签到</h1>
+                <div class="network-status" id="network-status">
+                    <span class="status-dot"></span>
+                    <span class="status-text" id="network-text">在线</span>
+                </div>
+            </div>
+        </header>
+
+        <main class="app-main">
+            <section id="view-dashboard" class="view active">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon water">💧</div>
+                        <div class="stat-info">
+                            <div class="stat-label">饮水库存</div>
+                            <div class="stat-value" id="stat-water">0</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon medicine">💊</div>
+                        <div class="stat-info">
+                            <div class="stat-label">药品库存</div>
+                            <div class="stat-value" id="stat-medicine">0</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon power">🔌</div>
+                        <div class="stat-info">
+                            <div class="stat-label">充电设备</div>
+                            <div class="stat-value" id="stat-power">0</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon sync">📡</div>
+                        <div class="stat-info">
+                            <div class="stat-label">待同步</div>
+                            <div class="stat-value" id="stat-sync">0</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="alert-section" id="alert-section" style="display: none;">
+                    <div class="alert-card warning">
+                        <div class="alert-icon">⚠️</div>
+                        <div class="alert-content">
+                            <div class="alert-title">有待处理冲突</div>
+                            <div class="alert-desc" id="conflict-count-desc">0 条记录需要复核</div>
+                        </div>
+                        <button class="alert-btn" onclick="navigateTo('conflicts')">去处理</button>
+                    </div>
+                </div>
+
+                <div class="section-title">快速操作</div>
+                <div class="action-grid">
+                    <button class="action-btn primary" onclick="navigateTo('distribute')">
+                        <span class="action-icon">📝</span>
+                        <span>物资签到</span>
+                    </button>
+                    <button class="action-btn" onclick="navigateTo('conflicts')">
+                        <span class="action-icon">⚖️</span>
+                        <span>冲突复核</span>
+                    </button>
+                    <button class="action-btn" onclick="navigateTo('history')">
+                        <span class="action-icon">📋</span>
+                        <span>领取记录</span>
+                    </button>
+                    <button class="action-btn" onclick="navigateTo('export')">
+                        <span class="action-icon">📤</span>
+                        <span>审计导出</span>
+                    </button>
+                </div>
+
+                <div class="section-title">最近领取</div>
+                <div class="recent-list" id="recent-list">
+                    <div class="empty-state">
+                        <div class="empty-icon">📦</div>
+                        <div class="empty-text">暂无领取记录</div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="view-distribute" class="view">
+                <div class="form-container">
+                    <div class="form-group">
+                        <label class="form-label">选择居民</label>
+                        <div class="resident-selector" id="resident-selector">
+                            <input type="text" class="form-input" id="resident-search" placeholder="搜索居民姓名或身份证号...">
+                            <div class="resident-list" id="resident-list"></div>
+                        </div>
+                    </div>
+
+                    <div class="selected-resident" id="selected-resident" style="display: none;">
+                        <div class="resident-info">
+                            <div class="resident-avatar" id="resident-avatar">张</div>
+                            <div class="resident-detail">
+                                <div class="resident-name" id="resident-name">张三</div>
+                                <div class="resident-id" id="resident-id">110101********1234</div>
+                            </div>
+                        </div>
+                        <button class="resident-change" onclick="clearResident()">更换</button>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">选择物资</label>
+                        <div class="supply-list" id="supply-list"></div>
+                    </div>
+
+                    <div class="form-group" id="quantity-group" style="display: none;">
+                        <label class="form-label">领取数量</label>
+                        <div class="quantity-control">
+                            <button class="qty-btn" onclick="changeQuantity(-1)">-</button>
+                            <input type="number" class="qty-input" id="quantity-input" value="1" min="1">
+                            <button class="qty-btn" onclick="changeQuantity(1)">+</button>
+                            <span class="stock-info">库存: <span id="current-stock">0</span></span>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">备注</label>
+                        <textarea class="form-textarea" id="distribution-notes" placeholder="可选：特殊情况说明"></textarea>
+                    </div>
+
+                    <button class="submit-btn" id="submit-btn" onclick="submitDistribution()" disabled>
+                        确认领取
+                    </button>
+
+                    <div class="error-message" id="distribute-error" style="display: none;"></div>
+                </div>
+            </section>
+
+            <section id="view-conflicts" class="view">
+                <div class="conflict-stats">
+                    <div class="conflict-stat">
+                        <div class="conflict-stat-value" id="pending-conflicts">0</div>
+                        <div class="conflict-stat-label">待处理</div>
+                    </div>
+                    <div class="conflict-stat">
+                        <div class="conflict-stat-value" id="resolved-conflicts">0</div>
+                        <div class="conflict-stat-label">已解决</div>
+                    </div>
+                    <div class="conflict-stat">
+                        <div class="conflict-stat-value" id="rejected-conflicts">0</div>
+                        <div class="conflict-stat-label">已驳回</div>
+                    </div>
+                </div>
+
+                <div class="section-title">待处理冲突</div>
+                <div class="conflict-list" id="conflict-list">
+                    <div class="empty-state">
+                        <div class="empty-icon">✅</div>
+                        <div class="empty-text">暂无待处理冲突</div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="view-history" class="view">
+                <div class="filter-bar">
+                    <select class="filter-select" id="filter-status" onchange="filterHistory()">
+                        <option value="all">全部状态</option>
+                        <option value="synced">已同步</option>
+                        <option value="pending">待同步</option>
+                        <option value="conflicted">冲突</option>
+                    </select>
+                    <select class="filter-select" id="filter-supply" onchange="filterHistory()">
+                        <option value="all">全部物资</option>
+                    </select>
+                </div>
+                <div class="history-list" id="history-list"></div>
+            </section>
+
+            <section id="view-export" class="view">
+                <div class="export-container">
+                    <div class="section-title">导出审计记录</div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">时间范围</label>
+                        <div class="date-range">
+                            <input type="date" class="form-input" id="export-start-date">
+                            <span class="date-sep">至</span>
+                            <input type="date" class="form-input" id="export-end-date">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">导出格式</label>
+                        <div class="format-options">
+                            <label class="format-option">
+                                <input type="radio" name="export-format" value="csv" checked>
+                                <span>CSV 表格</span>
+                            </label>
+                            <label class="format-option">
+                                <input type="radio" name="export-format" value="json">
+                                <span>JSON 数据</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="export-stats">
+                        <div class="export-stat">
+                            <div class="export-stat-value" id="export-total">0</div>
+                            <div class="export-stat-label">记录总数</div>
+                        </div>
+                        <div class="export-stat">
+                            <div class="export-stat-value" id="export-synced">0</div>
+                            <div class="export-stat-label">已同步</div>
+                        </div>
+                        <div class="export-stat">
+                            <div class="export-stat-value" id="export-conflicted">0</div>
+                            <div class="export-stat-label">冲突</div>
+                        </div>
+                    </div>
+
+                    <button class="submit-btn" onclick="exportData()">导出数据</button>
+                </div>
+            </section>
+        </main>
+
+        <nav class="bottom-nav">
+            <button class="nav-item active" data-view="dashboard" onclick="navigateTo('dashboard')">
+                <span class="nav-icon">🏠</span>
+                <span class="nav-label">首页</span>
+            </button>
+            <button class="nav-item" data-view="distribute" onclick="navigateTo('distribute')">
+                <span class="nav-icon">📝</span>
+                <span class="nav-label">签到</span>
+            </button>
+            <button class="nav-item" data-view="conflicts" onclick="navigateTo('conflicts')">
+                <span class="nav-icon">⚖️</span>
+                <span class="nav-label">复核</span>
+                <span class="nav-badge" id="conflict-badge" style="display: none;">0</span>
+            </button>
+            <button class="nav-item" data-view="history" onclick="navigateTo('history')">
+                <span class="nav-icon">📋</span>
+                <span class="nav-label">记录</span>
+            </button>
+            <button class="nav-item" data-view="export" onclick="navigateTo('export')">
+                <span class="nav-icon">📤</span>
+                <span class="nav-label">导出</span>
+            </button>
+        </nav>
+    </div>
+
+    <div class="modal" id="conflict-modal" style="display: none;">
+        <div class="modal-overlay" onclick="closeConflictModal()"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>冲突复核</h3>
+                <button class="modal-close" onclick="closeConflictModal()">✕</button>
+            </div>
+            <div class="modal-body" id="conflict-modal-body"></div>
+            <div class="modal-footer">
+                <button class="modal-btn reject" onclick="resolveConflict('reject')">驳回本地</button>
+                <button class="modal-btn approve" onclick="resolveConflict('approve')">批准本地</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast" style="display: none;"></div>
+
+    <script src="js/db.js"></script>
+    <script src="js/sync.js"></script>
+    <script src="js/export.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
