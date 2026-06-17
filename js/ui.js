@@ -37,7 +37,8 @@ function navigateTo(viewName) {
         distribute: '物资领取',
         conflicts: '冲突复核',
         history: '领取记录',
-        export: '审计导出'
+        export: '审计导出',
+        supplies: '物资配置'
     };
     
     const titleEl = document.getElementById('page-title');
@@ -55,6 +56,8 @@ function navigateTo(viewName) {
         refreshHistoryView();
     } else if (viewName === 'export') {
         refreshExportView();
+    } else if (viewName === 'supplies') {
+        refreshSuppliesView();
     }
 }
 
@@ -673,8 +676,8 @@ async function refreshExportView() {
     const today = new Date();
     const startDate = new Date(today.getFullYear(), today.getMonth(), 1);
     
-    document.getElementById('export-start-date').value = startDate.toISOString().slice(0, 10);
-    document.getElementById('export-end-date').value = today.toISOString().slice(0, 10);
+    document.getElementById('export-start-date').value = formatLocalDate(startDate);
+    document.getElementById('export-end-date').value = formatLocalDate(today);
     
     await updateExportStats();
 }
@@ -704,3 +707,194 @@ async function exportData() {
         console.error('Export error:', error);
     }
 }
+
+let editingSupplyId = null;
+
+async function refreshSuppliesView() {
+    const listEl = document.getElementById('supply-config-list');
+    if (!listEl) return;
+    
+    const supplies = await db.getAll(STORES.SUPPLIES);
+    
+    if (supplies.length === 0) {
+        listEl.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-icon">📦</div>
+                <div class="empty-text">暂无物资，请点击上方按钮新增</div>
+            </div>
+        `;
+        return;
+    }
+    
+    listEl.innerHTML = supplies.map(s => `
+        <div class="supply-config-item">
+            <div class="supply-config-header">
+                <div class="supply-config-icon">${s.icon || '📦'}</div>
+                <div class="supply-config-info">
+                    <div class="supply-config-name">${s.name}</div>
+                    <div class="supply-config-meta">
+                        库存: ${s.currentStock}/${s.totalStock} ${s.unit} | 每日限领: ${s.dailyLimit} ${s.unit}
+                    </div>
+                </div>
+            </div>
+            <div class="supply-config-actions">
+                <button class="btn-edit" onclick="editSupply('${s.id}')">编辑</button>
+                <button class="btn-delete" onclick="deleteSupply('${s.id}')">删除</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function openSupplyModal(supplyId = null) {
+    editingSupplyId = supplyId;
+    const modal = document.getElementById('supply-modal');
+    const titleEl = document.getElementById('supply-modal-title');
+    
+    if (supplyId) {
+        titleEl.textContent = '编辑物资';
+        db.get(STORES.SUPPLIES, supplyId).then(supply => {
+            if (supply) {
+                document.getElementById('supply-name').value = supply.name || '';
+                document.getElementById('supply-icon').value = supply.icon || '';
+                document.getElementById('supply-total-stock').value = supply.totalStock || 0;
+                document.getElementById('supply-current-stock').value = supply.currentStock || 0;
+                document.getElementById('supply-unit').value = supply.unit || '';
+                document.getElementById('supply-daily-limit').value = supply.dailyLimit || 1;
+                document.getElementById('supply-category').value = supply.category || 'other';
+            }
+        });
+    } else {
+        titleEl.textContent = '新增物资';
+        document.getElementById('supply-name').value = '';
+        document.getElementById('supply-icon').value = '';
+        document.getElementById('supply-total-stock').value = '';
+        document.getElementById('supply-current-stock').value = '';
+        document.getElementById('supply-unit').value = '';
+        document.getElementById('supply-daily-limit').value = '';
+        document.getElementById('supply-category').value = 'other';
+    }
+    
+    document.getElementById('supply-error').style.display = 'none';
+    modal.style.display = 'flex';
+}
+
+function closeSupplyModal() {
+    const modal = document.getElementById('supply-modal');
+    modal.style.display = 'none';
+    editingSupplyId = null;
+}
+
+async function saveSupply() {
+    const errorEl = document.getElementById('supply-error');
+    
+    try {
+        const name = document.getElementById('supply-name').value.trim();
+        const icon = document.getElementById('supply-icon').value.trim() || '📦';
+        const totalStock = parseInt(document.getElementById('supply-total-stock').value) || 0;
+        const currentStock = parseInt(document.getElementById('supply-current-stock').value) || 0;
+        const unit = document.getElementById('supply-unit').value.trim();
+        const dailyLimit = parseInt(document.getElementById('supply-daily-limit').value) || 1;
+        const category = document.getElementById('supply-category').value;
+        
+        if (!name) throw new Error('请输入物资名称');
+        if (!unit) throw new Error('请输入单位');
+        if (currentStock < 0) throw new Error('当前库存不能为负数');
+        if (totalStock < 0) throw new Error('总库存不能为负数');
+        if (dailyLimit < 1) throw new Error('每日限领至少为1');
+        
+        let supply;
+        if (editingSupplyId) {
+            supply = await db.get(STORES.SUPPLIES, editingSupplyId);
+            if (!supply) throw new Error('物资不存在');
+            supply.name = name;
+            supply.icon = icon;
+            supply.totalStock = totalStock;
+            supply.currentStock = currentStock;
+            supply.unit = unit;
+            supply.dailyLimit = dailyLimit;
+            supply.category = category;
+        } else {
+            supply = {
+                id: generateId('supply'),
+                name,
+                icon,
+                totalStock,
+                currentStock,
+                unit,
+                dailyLimit,
+                category,
+                createdAt: Date.now()
+            };
+        }
+        
+        await db.put(STORES.SUPPLIES, supply);
+        
+        const serverState = await db.get(STORES.SERVER_STATE, 'server_supplies');
+        if (serverState) {
+            const idx = serverState.data.findIndex(s => s.id === supply.id);
+            if (idx >= 0) {
+                serverState.data[idx] = { ...supply };
+            } else {
+                serverState.data.push({ ...supply });
+            }
+            await db.put(STORES.SERVER_STATE, serverState);
+        }
+        
+        await addAuditLog(editingSupplyId ? 'update_supply' : 'create_supply', {
+            supplyId: supply.id,
+            supplyName: name
+        });
+        
+        showToast(editingSupplyId ? '物资已更新' : '物资已新增');
+        closeSupplyModal();
+        refreshSuppliesView();
+        refreshDashboard();
+        
+    } catch (error) {
+        if (errorEl) {
+            errorEl.textContent = error.message;
+            errorEl.style.display = 'block';
+        }
+        console.error('Save supply error:', error);
+    }
+}
+
+async function editSupply(supplyId) {
+    openSupplyModal(supplyId);
+}
+
+async function deleteSupply(supplyId) {
+    if (!confirm('确定要删除该物资吗？删除后无法恢复。')) return;
+    
+    try {
+        const supply = await db.get(STORES.SUPPLIES, supplyId);
+        if (!supply) throw new Error('物资不存在');
+        
+        await db.delete(STORES.SUPPLIES, supplyId);
+        
+        const serverState = await db.get(STORES.SERVER_STATE, 'server_supplies');
+        if (serverState) {
+            serverState.data = serverState.data.filter(s => s.id !== supplyId);
+            await db.put(STORES.SERVER_STATE, serverState);
+        }
+        
+        await addAuditLog('delete_supply', {
+            supplyId,
+            supplyName: supply.name
+        });
+        
+        showToast('物资已删除');
+        refreshSuppliesView();
+        refreshDashboard();
+        
+    } catch (error) {
+        showToast('删除失败: ' + error.message);
+        console.error('Delete supply error:', error);
+    }
+}
+
+window.openSupplyModal = openSupplyModal;
+window.closeSupplyModal = closeSupplyModal;
+window.saveSupply = saveSupply;
+window.editSupply = editSupply;
+window.deleteSupply = deleteSupply;

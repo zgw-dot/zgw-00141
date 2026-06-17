@@ -94,6 +94,7 @@ class SyncEngine {
             
             for (const item of pendingItems) {
                 if (!this.isOnline) break;
+                if (item.status === QUEUE_STATUS.CONFLICTED) continue;
                 await this.processQueueItem(item);
             }
             
@@ -316,7 +317,9 @@ class SyncEngine {
             await db.put(STORES.DISTRIBUTIONS, distribution);
         }
 
-        await db.delete(STORES.OFFLINE_QUEUE, item.id);
+        item.status = QUEUE_STATUS.CONFLICTED;
+        item.conflictId = conflict.id;
+        await db.put(STORES.OFFLINE_QUEUE, item);
         
         await addAuditLog('conflict_detected', {
             conflictId: conflict.id,
@@ -358,7 +361,9 @@ class SyncEngine {
     }
 
     async getPendingCount() {
-        return await db.count(STORES.OFFLINE_QUEUE, 'status', IDBKeyRange.only(QUEUE_STATUS.PENDING));
+        const pending = await db.count(STORES.OFFLINE_QUEUE, 'status', IDBKeyRange.only(QUEUE_STATUS.PENDING));
+        const conflicted = await db.count(STORES.OFFLINE_QUEUE, 'status', IDBKeyRange.only(QUEUE_STATUS.CONFLICTED));
+        return pending + conflicted;
     }
 
     async getConflictCounts() {
@@ -412,6 +417,13 @@ class SyncEngine {
         }
 
         await db.put(STORES.DISTRIBUTIONS, distribution);
+
+        const queueItems = await db.getAll(STORES.OFFLINE_QUEUE, 'status', IDBKeyRange.only(QUEUE_STATUS.CONFLICTED));
+        for (const qItem of queueItems) {
+            if (qItem.conflictId === conflictId) {
+                await db.delete(STORES.OFFLINE_QUEUE, qItem.id);
+            }
+        }
 
         await addAuditLog('conflict_resolved', {
             conflictId,

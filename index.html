@@ -81,6 +81,10 @@
                         <span class="action-icon">📤</span>
                         <span>审计导出</span>
                     </button>
+                    <button class="action-btn" onclick="navigateTo('supplies')">
+                        <span class="action-icon">📦</span>
+                        <span>物资配置</span>
+                    </button>
                 </div>
 
                 <div class="section-title">最近领取</div>
@@ -226,6 +230,16 @@
                     <button class="submit-btn" onclick="exportData()">导出数据</button>
                 </div>
             </section>
+
+            <section id="view-supplies" class="view">
+                <div class="form-container">
+                    <div class="section-title">
+                        物资列表
+                        <button class="btn-primary-small" onclick="openSupplyModal()">+ 新增物资</button>
+                    </div>
+                    <div class="supply-config-list" id="supply-config-list"></div>
+                </div>
+            </section>
         </main>
 
         <nav class="bottom-nav">
@@ -250,6 +264,10 @@
                 <span class="nav-icon">📤</span>
                 <span class="nav-label">导出</span>
             </button>
+            <button class="nav-item" data-view="supplies" onclick="navigateTo('supplies')">
+                <span class="nav-icon">📦</span>
+                <span class="nav-label">物资</span>
+            </button>
         </nav>
     </div>
 
@@ -264,6 +282,57 @@
             <div class="modal-footer">
                 <button class="modal-btn reject" onclick="resolveConflict('reject')">驳回本地</button>
                 <button class="modal-btn approve" onclick="resolveConflict('approve')">批准本地</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal" id="supply-modal" style="display: none;">
+        <div class="modal-overlay" onclick="closeSupplyModal()"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="supply-modal-title">新增物资</h3>
+                <button class="modal-close" onclick="closeSupplyModal()">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">物资名称</label>
+                    <input type="text" class="form-input" id="supply-name" placeholder="请输入物资名称">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">物资图标</label>
+                    <input type="text" class="form-input" id="supply-icon" placeholder="请输入emoji图标，如：💊">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">总库存</label>
+                    <input type="number" class="form-input" id="supply-total-stock" placeholder="请输入总库存数量" min="0">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">当前库存</label>
+                    <input type="number" class="form-input" id="supply-current-stock" placeholder="请输入当前库存数量" min="0">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">单位</label>
+                    <input type="text" class="form-input" id="supply-unit" placeholder="如：瓶、包、个">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">每日限领</label>
+                    <input type="number" class="form-input" id="supply-daily-limit" placeholder="每人每日最多领取数量" min="1">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">物资分类</label>
+                    <select class="form-input" id="supply-category">
+                        <option value="water">饮水</option>
+                        <option value="medicine">药品</option>
+                        <option value="power">充电设备</option>
+                        <option value="food">食品</option>
+                        <option value="other">其他</option>
+                    </select>
+                </div>
+                <div class="error-message" id="supply-error" style="display: none;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-btn reject" onclick="closeSupplyModal()">取消</button>
+                <button class="modal-btn approve" onclick="saveSupply()">保存</button>
             </div>
         </div>
     </div>
