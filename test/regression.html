@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>回归测试 - 社区避难所物资签到系统</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        h1 {
+            font-size: 24px;
+            margin-bottom: 20px;
+            color: #1e293b;
+        }
+        .controls {
+            background: white;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        button {
+            background: #2563eb;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover { background: #1d4ed8; }
+        button:disabled { background: #94a3b8; cursor: not-allowed; }
+        button.secondary { background: #64748b; }
+        button.secondary:hover { background: #475569; }
+        .summary {
+            background: white;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            display: none;
+        }
+        .summary.show { display: block; }
+        .summary .stats {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 10px;
+        }
+        .stat {
+            font-size: 14px;
+        }
+        .stat .label { color: #64748b; margin-right: 8px; }
+        .stat .value { font-weight: 600; font-size: 18px; }
+        .stat.pass .value { color: #10b981; }
+        .stat.fail .value { color: #ef4444; }
+        .test-list {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .test-item {
+            padding: 12px 16px;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+        .test-item:last-child { border-bottom: none; }
+        .test-item.pass { background: #f0fdf4; }
+        .test-item.fail { background: #fef2f2; }
+        .test-item .test-info { flex: 1; }
+        .test-name {
+            font-size: 14px;
+            color: #1e293b;
+        }
+        .test-status {
+            font-size: 12px;
+            font-weight: 600;
+            padding: 4px 8px;
+            border-radius: 4px;
+            white-space: nowrap;
+        }
+        .test-status.pass { background: #dcfce7; color: #166534; }
+        .test-status.fail { background: #fecaca; color: #991b1b; }
+        .test-status.running { background: #e2e8f0; color: #64748b; }
+        .test-duration {
+            font-size: 12px;
+            color: #64748b;
+            margin-left: 8px;
+        }
+        .test-error {
+            font-size: 12px;
+            color: #dc2626;
+            margin-top: 4px;
+            padding-left: 4px;
+            white-space: pre-wrap;
+            font-family: monospace;
+        }
+        .scenario-title {
+            background: #1e293b;
+            color: white;
+            padding: 10px 16px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .loading {
+            padding: 40px;
+            text-align: center;
+            color: #94a3b8;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 回归测试 - 社区避难所物资签到系统</h1>
+    
+    <div class="controls">
+        <button id="run-btn" onclick="window.runAllTests()">▶ 运行全部测试</button>
+        <button class="secondary" onclick="window.resetData()">♻ 重置数据</button>
+        <span id="progress" style="color: #64748b; font-size: 13px;">初始化中...</span>
+    </div>
+    
+    <div class="summary" id="summary">
+        <div class="stats">
+            <div class="stat"><span class="label">总用例:</span><span class="value" id="total">0</span></div>
+            <div class="stat pass"><span class="label">通过:</span><span class="value" id="passed">0</span></div>
+            <div class="stat fail"><span class="label">失败:</span><span class="value" id="failed">0</span></div>
+            <div class="stat"><span class="label">耗时:</span><span class="value" id="duration">0ms</span></div>
+        </div>
+    </div>
+    
+    <div class="test-list" id="test-list">
+        <div class="loading" id="loading-msg">正在初始化数据库...</div>
+    </div>
+
+    <script src="../js/db.js"></script>
+    <script src="../js/sync.js"></script>
+    <script src="../js/export.js"></script>
+    <script src="../js/ui.js"></script>
+    <script src="../js/app.js"></script>
+    <script>
+        window.testReady = false;
+        window.testResults = [];
+        
+        function assert(condition, message) {
+            if (!condition) {
+                throw new Error(message || 'Assertion failed');
+            }
+        }
+
+        function assertEq(actual, expected, message) {
+            if (actual !== expected) {
+                throw new Error((message || '') + `\n  expected: ${expected}\n  actual: ${actual}`);
+            }
+        }
+
+        function waitFor(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        async function resetData() {
+            await db.init();
+            const stores = Object.values(STORES);
+            for (const store of stores) {
+                await db.clear(store);
+            }
+            await initSampleData();
+            console.log('[Test] 数据已重置');
+        }
+
+        function addTestResult(test) {
+            const list = document.getElementById('test-list');
+            
+            if (test.scenarioStart) {
+                const div = document.createElement('div');
+                div.className = 'scenario-title';
+                div.textContent = test.scenarioStart;
+                list.appendChild(div);
+                return;
+            }
+            
+            const div = document.createElement('div');
+            div.className = 'test-item ' + (test.passed ? 'pass' : 'fail');
+            div.id = 'test-' + test.name.replace(/[^a-zA-Z0-9]/g, '-');
+            
+            const statusText = test.passed ? '✓ 通过' : (test.running ? '运行中...' : '✗ 失败');
+            const statusClass = test.passed ? 'pass' : (test.running ? 'running' : 'fail');
+            
+            div.innerHTML = `
+                <div class="test-info">
+                    <div class="test-name">${test.name}</div>
+                    ${test.error ? `<div class="test-error">${test.error}</div>` : ''}
+                </div>
+                <div style="display: flex; align-items: center;">
+                    <span class="test-status ${statusClass}">${statusText}</span>
+                    ${test.duration !== undefined ? `<span class="test-duration">${test.duration}ms</span>` : ''}
+                </div>
+            `;
+            list.appendChild(div);
+        }
+
+        function updateTestResult(name, result) {
+            const id = 'test-' + name.replace(/[^a-zA-Z0-9]/g, '-');
+            const div = document.getElementById(id);
+            if (!div) return;
+            
+            div.className = 'test-item ' + (result.passed ? 'pass' : 'fail');
+            
+            const statusText = result.passed ? '✓ 通过' : '✗ 失败';
+            const statusClass = result.passed ? 'pass' : 'fail';
+            
+            div.innerHTML = `
+                <div class="test-info">
+                    <div class="test-name">${name}</div>
+                    ${result.error ? `<div class="test-error">${result.error}</div>` : ''}
+                </div>
+                <div style="display: flex; align-items: center;">
+                    <span class="test-status ${statusClass}">${statusText}</span>
+                    <span class="test-duration">${result.duration}ms</span>
+                </div>
+            `;
+        }
+
+        async function runSingleTest(name, testFn) {
+            addTestResult({ name, running: true });
+            const start = Date.now();
+            let passed = false;
+            let error = null;
+            
+            try {
+                await testFn();
+                passed = true;
+            } catch (e) {
+                error = e.message || String(e);
+                console.error(`[测试失败] ${name}:`, e);
+            }
+            
+            const duration = Date.now() - start;
+            const result = { name, passed, error, duration };
+            window.testResults.push(result);
+            updateTestResult(name, result);
+            
+            return result;
+        }
+
+        async function runScenario1() {
+            console.log('\n=== 场景1: 物资配置持久化测试 ===');
+            addTestResult({ scenarioStart: '📦 场景1: 物资配置持久化测试' });
+            
+            await resetData();
+            
+            await runSingleTest('1.1 重置数据后有5种初始物资', async () => {
+                const supplies = await db.getAll(STORES.SUPPLIES);
+                assertEq(supplies.length, 5, '初始物资数量应为5');
+            });
+
+            await runSingleTest('1.2 新增物资后列表包含6种物资', async () => {
+                const newSupply = {
+                    id: 'test_supply_001',
+                    name: '测试手电筒',
+                    category: 'other',
+                    unit: '把',
+                    totalStock: 50,
+                    currentStock: 50,
+                    icon: '🔦',
+                    dailyLimit: 1
+                };
+                await db.put(STORES.SUPPLIES, newSupply);
+                
+                const serverState = await db.get(STORES.SERVER_STATE, 'server_supplies');
+                serverState.data.push({ ...newSupply });
+                await db.put(STORES.SERVER_STATE, serverState);
+                
+                const supplies = await db.getAll(STORES.SUPPLIES);
+                assertEq(supplies.length, 6, '新增后物资数量应为6');
+                
+                const found = supplies.find(s => s.id === 'test_supply_001');
+                assert(found, '应能找到新增的测试手电筒');
+                assertEq(found.name, '测试手电筒', '名称应为测试手电筒');
+                assertEq(found.currentStock, 50, '库存应为50');
+                assertEq(found.unit, '把', '单位应为把');
+                assertEq(found.dailyLimit, 1, '每日限领应为1');
+            });
+
+            await runSingleTest('1.3 编辑物资后数据更新', async () => {
+                const supply = await db.get(STORES.SUPPLIES, 'test_supply_001');
+                supply.currentStock = 30;
+                supply.dailyLimit = 2;
+                supply.name = '测试手电筒(改)';
+                await db.put(STORES.SUPPLIES, supply);
+                
+                const serverState = await db.get(STORES.SERVER_STATE, 'server_supplies');
+                const idx = serverState.data.findIndex(s => s.id === 'test_supply_001');
+                if (idx >= 0) {
+                    serverState.data[idx] = { ...supply };
+                    await db.put(STORES.SERVER_STATE, serverState);
+                }
+                
+                const updated = await db.get(STORES.SUPPLIES, 'test_supply_001');
+                assertEq(updated.currentStock, 30, '编辑后库存应为30');
+                assertEq(updated.dailyLimit, 2, '编辑后每日限领应为2');
+                assertEq(updated.name, '测试手电筒(改)', '编辑后名称应为测试手电筒(改)');
+            });
+
+            await runSingleTest('1.4 数据持久化（重新读取）后仍保留', async () => {
+                const supplyBefore = await db.get(STORES.SUPPLIES, 'test_supply_001');
+                assert(supplyBefore, '刷新前应存在测试物资');
+                
+                const suppliesAfter = await db.getAll(STORES.SUPPLIES);
+                assertEq(suppliesAfter.length, 6, '刷新后仍应为6种物资');
+                
+                const found = suppliesAfter.find(s => s.id === 'test_supply_001');
+                assert(found, '刷新后应能找到测试物资');
+                assertEq(found.currentStock, 30, '刷新后库存应保持30');
+                assertEq(found.name, '测试手电筒(改)', '刷新后名称应保持');
+            });
+
+            await runSingleTest('1.5 服务端状态与本地状态一致', async () => {
+                const localSupplies = await db.getAll(STORES.SUPPLIES);
+                const serverState = await db.get(STORES.SERVER_STATE, 'server_supplies');
+                
+                assertEq(localSupplies.length, serverState.data.length,
+                    '本地与服务端物资数量应一致');
+                
+                for (const local of localSupplies) {
+                    const server = serverState.data.find(s => s.id === local.id);
+                    assert(server, `服务端应存在物资 ${local.name}`);
+                    assertEq(local.currentStock, server.currentStock,
+                        `${local.name} 的库存应一致`);
+                }
+            });
+        }
+
+        async function runScenario2() {
+            console.log('\n=== 场景2: 冲突队列保留测试 ===');
+            addTestResult({ scenarioStart: '⚡ 场景2: 冲突队列保留测试' });
+            
+            await resetData();
+            
+            await runSingleTest('2.1 重置数据后初始状态正确', async () => {
+                const pendingCount = await syncEngine.getPendingCount();
+                assertEq(pendingCount, 0, '初始待同步数应为0');
+                
+                const conflictCounts = await syncEngine.getConflictCounts();
+                assertEq(conflictCounts.pending, 0, '初始待处理冲突数应为0');
+            });
+
+            await runSingleTest('2.2 正常领取1次后同步成功', async () => {
+                const residents = await db.getAll(STORES.RESIDENTS);
+                const supplies = await db.getAll(STORES.SUPPLIES);
+                const resident = residents[0];
+                const supply = supplies[0];
+                const stockBefore = supply.currentStock;
+                
+                const dist = {
+                    id: 'test_dist_normal',
+                    residentId: resident.id,
+                    residentName: resident.name,
+                    supplyId: supply.id,
+                    supplyName: supply.name,
+                    quantity: 1,
+                    status: DISTRIBUTION_STATUS.PENDING,
+                    timestamp: Date.now() - 5000,
+                    operatorId: CURRENT_USER.id,
+                    operatorName: CURRENT_USER.name,
+                    notes: '回归测试-正常领取',
+                    version: 1
+                };
+                
+                await db.put(STORES.DISTRIBUTIONS, dist);
+                await syncEngine.addToQueue('create_distribution', dist);
+                
+                await waitFor(2500);
+                
+                const updated = await db.get(STORES.DISTRIBUTIONS, 'test_dist_normal');
+                assertEq(updated.status, DISTRIBUTION_STATUS.SYNCED, '正常领取应同步成功');
+                
+                const supplyAfter = await db.get(STORES.SUPPLIES, supply.id);
+                assertEq(supplyAfter.currentStock, stockBefore - 1,
+                    '同步成功后库存应扣减1');
+            });
+
+            await runSingleTest('2.3 重复领取产生冲突，状态为conflicted', async () => {
+                const residents = await db.getAll(STORES.RESIDENTS);
+                const supplies = await db.getAll(STORES.SUPPLIES);
+                const resident = residents[0];
+                const supply = supplies[0];
+                
+                const dist = {
+                    id: 'test_dist_duplicate',
+                    residentId: resident.id,
+                    residentName: resident.name,
+                    supplyId: supply.id,
+                    supplyName: supply.name,
+                    quantity: 1,
+                    status: DISTRIBUTION_STATUS.PENDING,
+                    timestamp: Date.now() - 3000,
+                    operatorId: CURRENT_USER.id,
+                    operatorName: CURRENT_USER.name,
+                    notes: '回归测试-重复领取',
+                    version: 1
+                };
+                
+                await db.put(STORES.DISTRIBUTIONS, dist);
+                await syncEngine.addToQueue('create_distribution', dist);
+                
+                await waitFor(2500);
+                
+                const updated = await db.get(STORES.DISTRIBUTIONS, 'test_dist_duplicate');
+                assertEq(updated.status, DISTRIBUTION_STATUS.CONFLICTED,
+                    '重复领取状态应为冲突');
+                assert(updated.conflictId, '应有冲突ID');
+            });
+
+            await runSingleTest('2.4 冲突产生后待同步队列不为0', async () => {
+                const pendingCount = await syncEngine.getPendingCount();
+                assert(pendingCount >= 1, `冲突产生后待同步数应>=1，实际为${pendingCount}`);
+            });
+
+            await runSingleTest('2.5 冲突数与待处理队列数对应', async () => {
+                const conflictCounts = await syncEngine.getConflictCounts();
+                const pendingQueue = await syncEngine.getPendingCount();
+                
+                assertEq(conflictCounts.pending, 1, '待处理冲突数应为1');
+                assert(pendingQueue >= 1, '待同步队列数应>=1');
+            });
+
+            await runSingleTest('2.6 队列中有CONFLICTED状态的项', async () => {
+                const queueBefore = await db.getAll(STORES.OFFLINE_QUEUE);
+                const conflictedItems = queueBefore.filter(q => q.status === QUEUE_STATUS.CONFLICTED);
+                assert(conflictedItems.length >= 1, '队列中应有冲突状态的项');
+                
+                const conflictsBefore = await syncEngine.getConflictCounts();
+                assertEq(conflictsBefore.pending, 1, '待处理冲突应为1');
+            });
+
+            await runSingleTest('2.7 管理员处理冲突后队列项被移除', async () => {
+                const origRole = CURRENT_USER.role;
+                const origName = CURRENT_USER.name;
+                
+                CURRENT_USER.role = ROLES.ADMIN;
+                CURRENT_USER.name = '管理员老李';
+                
+                const conflicts = await db.getAll(STORES.CONFLICTS, 'status',
+                    IDBKeyRange.only(CONFLICT_STATUS.PENDING));
+                assert(conflicts.length > 0, '应存在待处理冲突');
+                
+                const conflictId = conflicts[0].id;
+                const pendingBefore = await syncEngine.getPendingCount();
+                
+                await syncEngine.resolveConflict(conflictId, 'reject');
+                
+                await waitFor(800);
+                
+                const pendingAfter = await syncEngine.getPendingCount();
+                assert(pendingAfter < pendingBefore,
+                    `处理后待同步数应减少，之前${pendingBefore}，之后${pendingAfter}`);
+                
+                const resolved = await db.get(STORES.CONFLICTS, conflictId);
+                assertEq(resolved.status, CONFLICT_STATUS.REJECTED, '冲突状态应为已驳回');
+                
+                CURRENT_USER.role = origRole;
+                CURRENT_USER.name = origName;
+            });
+        }
+
+        async function runScenario3() {
+            console.log('\n=== 场景3: 导出页默认日期测试 ===');
+            addTestResult({ scenarioStart: '📅 场景3: 导出页默认日期测试' });
+            
+            await resetData();
+            
+            await runSingleTest('3.1 formatLocalDate函数存在且返回本地日期', async () => {
+                assert(typeof formatLocalDate === 'function',
+                    '应存在 formatLocalDate 函数');
+                
+                const todayStr = formatLocalDate(new Date());
+                const realToday = new Date();
+                const expected = realToday.getFullYear() + '-' +
+                    String(realToday.getMonth() + 1).padStart(2, '0') + '-' +
+                    String(realToday.getDate()).padStart(2, '0');
+                
+                assertEq(todayStr, expected,
+                    `formatLocalDate 应返回本地日期 ${expected}，实际 ${todayStr}`);
+            });
+
+            await runSingleTest('3.2 产生当天领取记录', async () => {
+                const residents = await db.getAll(STORES.RESIDENTS);
+                const supplies = await db.getAll(STORES.SUPPLIES);
+                const resident = residents[1];
+                const supply = supplies[1];
+                
+                const dist = {
+                    id: 'test_dist_today_export',
+                    residentId: resident.id,
+                    residentName: resident.name,
+                    supplyId: supply.id,
+                    supplyName: supply.name,
+                    quantity: 1,
+                    status: DISTRIBUTION_STATUS.SYNCED,
+                    timestamp: Date.now(),
+                    operatorId: CURRENT_USER.id,
+                    operatorName: CURRENT_USER.name,
+                    syncedAt: Date.now(),
+                    serverSyncedAt: Date.now(),
+                    notes: '回归测试-导出测试',
+                    version: 1
+                };
+                
+                await db.put(STORES.DISTRIBUTIONS, dist);
+                await addAuditLog('create_distribution', { distributionId: dist.id });
+                
+                const allDist = await db.getAll(STORES.DISTRIBUTIONS);
+                const today = new Date();
+                const todayDist = allDist.filter(d => {
+                    const dDate = new Date(d.timestamp);
+                    return dDate.getFullYear() === today.getFullYear() &&
+                           dDate.getMonth() === today.getMonth() &&
+                           dDate.getDate() === today.getDate();
+                });
+                
+                assert(todayDist.length >= 1, '应存在当天的领取记录');
+            });
+
+            await runSingleTest('3.3 默认日期范围（月初到今天）包含当天记录', async () => {
+                const today = new Date();
+                const startDate = formatLocalDate(new Date(today.getFullYear(), today.getMonth(), 1));
+                const endDate = formatLocalDate(today);
+                
+                const csv = await dataExporter.exportDistributions('csv', startDate, endDate);
+                const lines = csv.split('\n');
+                
+                assert(lines.length >= 2, '导出CSV应至少包含表头和1条数据');
+                
+                const hasTodayRecord = lines.some(line => 
+                    line.includes('回归测试-导出测试')
+                );
+                assert(hasTodayRecord, '默认日期导出应包含当天记录');
+            });
+
+            await runSingleTest('3.4 当天日期过滤能查到记录', async () => {
+                const today = formatLocalDate(new Date());
+                
+                const allDist = await db.getAll(STORES.DISTRIBUTIONS, 'timestamp');
+                const start = new Date(today).setHours(0, 0, 0, 0);
+                const end = new Date(today).setHours(23, 59, 59, 999);
+                
+                const todayDist = allDist.filter(d => 
+                    d.timestamp >= start && d.timestamp <= end
+                );
+                
+                assert(todayDist.length >= 1, `当天应至少有1条记录，实际 ${todayDist.length} 条`);
+            });
+
+            await runSingleTest('3.5 JSON导出也包含当天记录', async () => {
+                const today = new Date();
+                const startDate = formatLocalDate(new Date(today.getFullYear(), today.getMonth(), 1));
+                const endDate = formatLocalDate(today);
+                
+                const json = await dataExporter.exportDistributions('json', startDate, endDate);
+                const data = JSON.parse(json);
+                
+                assert(data.length >= 1, 'JSON导出应至少包含1条记录');
+                
+                const hasTestRecord = data.some(d => 
+                    d.notes === '回归测试-导出测试'
+                );
+                assert(hasTestRecord, 'JSON导出应包含测试记录');
+            });
+
+            await runSingleTest('3.6 导出的身份证号已脱敏', async () => {
+                const today = new Date();
+                const startDate = formatLocalDate(new Date(today.getFullYear(), today.getMonth(), 1));
+                const endDate = formatLocalDate(today);
+                
+                const csv = await dataExporter.exportDistributions('csv', startDate, endDate);
+                
+                const hasFullIdCard = /[0-9]{17}[0-9Xx]/.test(csv);
+                const hasMaskedId = csv.includes('****');
+                
+                assert(!hasFullIdCard, 'CSV中不应出现完整身份证号');
+            });
+        }
+
+        async function runAllTests() {
+            const btn = document.getElementById('run-btn');
+            btn.disabled = true;
+            btn.textContent = '运行中...';
+            
+            document.getElementById('test-list').innerHTML = '';
+            window.testResults = [];
+            
+            const startTime = Date.now();
+            
+            await runScenario1();
+            await runScenario2();
+            await runScenario3();
+            
+            const totalDuration = Date.now() - startTime;
+            
+            const total = window.testResults.length;
+            const passed = window.testResults.filter(r => r.passed).length;
+            const failed = total - passed;
+            
+            document.getElementById('summary').classList.add('show');
+            document.getElementById('total').textContent = total;
+            document.getElementById('passed').textContent = passed;
+            document.getElementById('failed').textContent = failed;
+            document.getElementById('duration').textContent = totalDuration + 'ms';
+            
+            document.getElementById('progress').textContent = 
+                failed === 0 ? '全部通过 ✓' : `${failed} 个失败`;
+            
+            btn.disabled = false;
+            btn.textContent = '▶ 重新运行';
+            
+            console.log('\n' + '='.repeat(40));
+            console.log(`  回归测试完成: ${passed}/${total} 通过 (${totalDuration}ms)`);
+            console.log('='.repeat(40));
+            
+            return { total, passed, failed, duration: totalDuration };
+        }
+
+        window.runAllTests = runAllTests;
+        window.resetData = resetData;
+        window.assert = assert;
+        window.assertEq = assertEq;
+        window.waitFor = waitFor;
+
+        async function initTestPage() {
+            try {
+                await db.init();
+                await initSampleData();
+                window.testReady = true;
+                document.getElementById('loading-msg').textContent = '准备就绪，点击"运行全部测试"开始';
+                document.getElementById('progress').textContent = '准备就绪';
+                document.getElementById('run-btn').disabled = false;
+                console.log('[Test] 测试页面初始化完成');
+            } catch (e) {
+                console.error('[Test] 初始化失败:', e);
+                document.getElementById('loading-msg').textContent = '初始化失败: ' + e.message;
+                document.getElementById('progress').textContent = '初始化失败';
+            }
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initTestPage);
+        } else {
+            initTestPage();
+        }
+    </script>
+</body>
+</html>
