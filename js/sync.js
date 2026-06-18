@@ -1,3 +1,335 @@
+class ImportEngine {
+    constructor() {
+        this.pendingImport = null;
+    }
+
+    parseCSV(content) {
+        const lines = content.trim().split('\n');
+        if (lines.length < 2) {
+            throw new Error('CSV文件至少需要包含表头和1条数据');
+        }
+
+        const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+        const requiredHeaders = ['居民姓名', '身份证号', '物资名称', '领取数量'];
+        const headerMap = {};
+
+        requiredHeaders.forEach(req => {
+            const idx = headers.findIndex(h => h === req.toLowerCase());
+            if (idx === -1) {
+                throw new Error(`CSV缺少必需列: ${req}`);
+            }
+            headerMap[req] = idx;
+        });
+
+        const optionalHeaders = ['备注', '领取时间'];
+        optionalHeaders.forEach(opt => {
+            const idx = headers.findIndex(h => h === opt.toLowerCase());
+            if (idx !== -1) {
+                headerMap[opt] = idx;
+            }
+        });
+
+        const records = [];
+        for (let i = 1; i < lines.length; i++) {
+            const cols = lines[i].split(',').map(c => c.trim());
+            if (cols.length < 4) continue;
+
+            const record = {
+                rowIndex: i,
+                residentName: cols[headerMap['居民姓名']] || '',
+                idCard: cols[headerMap['身份证号']] || '',
+                supplyName: cols[headerMap['物资名称']] || '',
+                quantity: parseInt(cols[headerMap['领取数量']]) || 0,
+                notes: headerMap['备注'] !== undefined ? cols[headerMap['备注']] : '',
+                timestamp: headerMap['领取时间'] !== undefined ? this.parseDate(cols[headerMap['领取时间']]) : Date.now()
+            };
+            records.push(record);
+        }
+
+        return records;
+    }
+
+    parseJSON(content) {
+        let data;
+        try {
+            data = JSON.parse(content);
+        } catch (e) {
+            throw new Error('JSON格式解析失败: ' + e.message);
+        }
+
+        if (!Array.isArray(data)) {
+            throw new Error('JSON数据必须是数组格式');
+        }
+
+        return data.map((item, idx) => ({
+            rowIndex: idx + 1,
+            residentName: item.residentName || item.居民姓名 || '',
+            idCard: item.idCard || item.身份证号 || '',
+            supplyName: item.supplyName || item.物资名称 || '',
+            quantity: parseInt(item.quantity || item.领取数量) || 0,
+            notes: item.notes || item.备注 || '',
+            timestamp: item.timestamp || item.领取时间 ? this.parseDate(item.timestamp || item.领取时间) : Date.now()
+        }));
+    }
+
+    parseDate(dateStr) {
+        if (!dateStr) return Date.now();
+        if (typeof dateStr === 'number') return dateStr;
+        
+        const d = new Date(dateStr);
+        if (!isNaN(d.getTime())) return d.getTime();
+        return Date.now();
+    }
+
+    async validateImportRecords(records, importSource) {
+        const residents = await db.getAll(STORES.RESIDENTS);
+        const supplies = await db.getAll(STORES.SUPPLIES);
+        
+        const residentMap = new Map();
+        residents.forEach(r => {
+            residentMap.set(r.idCard, r);
+            residentMap.set(r.name.toLowerCase(), r);
+        });
+
+        const supplyMap = new Map();
+        supplies.forEach(s => {
+            supplyMap.set(s.name.toLowerCase(), s);
+            supplyMap.set(s.id, s);
+        });
+
+        const validated = [];
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+
+        for (const record of records) {
+            const result = {
+                ...record,
+                valid: true,
+                errors: [],
+                warnings: [],
+                resident: null,
+                supply: null,
+                conflictType: null,
+                conflictData: null
+            };
+
+            if (!record.residentName) {
+                result.valid = false;
+                result.errors.push('缺少居民姓名');
+            }
+            if (!record.idCard) {
+                result.valid = false;
+                result.errors.push('缺少身份证号');
+            }
+            if (!record.supplyName) {
+                result.valid = false;
+                result.errors.push('缺少物资名称');
+            }
+            if (record.quantity <= 0) {
+                result.valid = false;
+                result.errors.push('领取数量必须大于0');
+            }
+
+            const resident = residentMap.get(record.idCard) || 
+                           residentMap.get(record.residentName.toLowerCase());
+            if (!resident) {
+                result.valid = false;
+                result.conflictType = CONFLICT_TYPES.INVALID_RESIDENT;
+                result.errors.push(`居民不存在: ${record.residentName} (${record.idCard})`);
+            } else {
+                result.resident = resident;
+            }
+
+            const supply = supplyMap.get(record.supplyName.toLowerCase());
+            if (!supply) {
+                result.valid = false;
+                result.conflictType = CONFLICT_TYPES.INVALID_SUPPLY;
+                result.errors.push(`物资不存在: ${record.supplyName}`);
+            } else {
+                result.supply = supply;
+            }
+
+            if (result.valid && resident && supply) {
+                if (record.quantity > supply.currentStock) {
+                    result.valid = false;
+                    result.conflictType = CONFLICT_TYPES.STOCK_OVERFLOW;
+                    result.conflictData = {
+                        local: { quantity: record.quantity },
+                        server: { currentStock: supply.currentStock, available: supply.currentStock }
+                    };
+                    result.errors.push(`库存不足: ${supply.name} 当前库存 ${supply.currentStock}，申请 ${record.quantity}`);
+                }
+
+                const todayDistributions = await db.getAll(
+                    STORES.DISTRIBUTIONS,
+                    'resident_supply',
+                    [resident.id, supply.id]
+                );
+                const todayQty = todayDistributions
+                    .filter(d => d.timestamp >= todayStart.getTime() && !d.rejected)
+                    .reduce((sum, d) => sum + d.quantity, 0);
+
+                if (todayQty + record.quantity > supply.dailyLimit && result.valid) {
+                    result.valid = false;
+                    result.conflictType = CONFLICT_TYPES.DAILY_LIMIT_EXCEEDED;
+                    result.conflictData = {
+                        local: { quantity: record.quantity },
+                        server: { 
+                            todayQty,
+                            dailyLimit: supply.dailyLimit,
+                            available: supply.dailyLimit - todayQty
+                        }
+                    };
+                    result.errors.push(`超过每日限领: ${resident.name} 今日已领 ${todayQty} ${supply.unit}，最多还可领 ${supply.dailyLimit - todayQty} ${supply.unit}`);
+                }
+
+                if (todayQty > 0 && result.conflictType !== CONFLICT_TYPES.DAILY_LIMIT_EXCEEDED) {
+                    result.warnings.push(`今日已领取过 ${supply.name}，本次为追加领取`);
+                }
+            }
+
+            if (!result.valid && !result.conflictType) {
+                result.conflictType = CONFLICT_TYPES.IMPORT_VALIDATION_ERROR;
+            }
+
+            validated.push(result);
+        }
+
+        return validated;
+    }
+
+    async processImport(validatedRecords, importSource) {
+        const results = {
+            success: 0,
+            conflicts: 0,
+            errors: 0,
+            imported: [],
+            conflicted: []
+        };
+
+        for (const record of validatedRecords) {
+            if (record.valid) {
+                const distribution = {
+                    id: generateId('dist'),
+                    residentId: record.resident.id,
+                    residentName: record.resident.name,
+                    supplyId: record.supply.id,
+                    supplyName: record.supply.name,
+                    quantity: record.quantity,
+                    status: DISTRIBUTION_STATUS.PENDING,
+                    timestamp: record.timestamp,
+                    operatorId: CURRENT_USER.id,
+                    operatorName: CURRENT_USER.name,
+                    notes: record.notes || null,
+                    version: 1,
+                    importSource: importSource,
+                    importRow: record.rowIndex,
+                    importedAt: Date.now()
+                };
+
+                await db.put(STORES.DISTRIBUTIONS, distribution);
+                await syncEngine.addToQueue('create_distribution', distribution);
+                await addAuditLog('import_distribution', {
+                    distributionId: distribution.id,
+                    importSource,
+                    rowIndex: record.rowIndex,
+                    residentId: record.resident.id,
+                    supplyId: record.supply.id,
+                    quantity: record.quantity
+                });
+
+                results.success++;
+                results.imported.push(distribution);
+            } else {
+                const conflictDist = {
+                    id: generateId('dist'),
+                    residentId: record.resident?.id,
+                    residentName: record.residentName,
+                    supplyId: record.supply?.id,
+                    supplyName: record.supplyName,
+                    quantity: record.quantity,
+                    status: DISTRIBUTION_STATUS.CONFLICTED,
+                    timestamp: record.timestamp,
+                    operatorId: CURRENT_USER.id,
+                    operatorName: CURRENT_USER.name,
+                    notes: record.notes || null,
+                    version: 1,
+                    importSource: importSource,
+                    importRow: record.rowIndex,
+                    importedAt: Date.now(),
+                    importErrors: record.errors
+                };
+
+                await db.put(STORES.DISTRIBUTIONS, conflictDist);
+
+                const conflict = {
+                    id: generateId('conflict'),
+                    distributionId: conflictDist.id,
+                    conflictType: record.conflictType,
+                    status: CONFLICT_STATUS.PENDING,
+                    localData: {
+                        ...conflictDist,
+                        validationErrors: record.errors
+                    },
+                    serverData: record.conflictData || { message: record.errors.join('; ') },
+                    timestamp: Date.now(),
+                    resolvedBy: null,
+                    resolvedAt: null,
+                    importSource: importSource
+                };
+
+                await db.put(STORES.CONFLICTS, conflict);
+                conflictDist.conflictId = conflict.id;
+                await db.put(STORES.DISTRIBUTIONS, conflictDist);
+
+                await addAuditLog('import_conflict', {
+                    conflictId: conflict.id,
+                    distributionId: conflictDist.id,
+                    importSource,
+                    conflictType: record.conflictType,
+                    errors: record.errors
+                });
+
+                results.conflicts++;
+                results.conflicted.push(conflict);
+            }
+        }
+
+        syncEngine.onConflictDetected?.();
+        
+        return results;
+    }
+
+    getTemplateCSV() {
+        return '\uFEFF居民姓名,身份证号,物资名称,领取数量,备注,领取时间\n' +
+               '张三,110101199001011234,瓶装饮用水,2,测试备注,2024-01-15 10:30\n' +
+               '李四,110101199102022345,应急药品包,1,,2024-01-15 11:00\n';
+    }
+
+    getTemplateJSON() {
+        return JSON.stringify([
+            {
+                residentName: '张三',
+                idCard: '110101199001011234',
+                supplyName: '瓶装饮用水',
+                quantity: 2,
+                notes: '测试备注',
+                timestamp: '2024-01-15 10:30'
+            },
+            {
+                residentName: '李四',
+                idCard: '110101199102022345',
+                supplyName: '应急药品包',
+                quantity: 1,
+                notes: '',
+                timestamp: '2024-01-15 11:00'
+            }
+        ], null, 2);
+    }
+}
+
+const importEngine = new ImportEngine();
+
 class SyncEngine {
     constructor() {
         this.isOnline = navigator.onLine;
@@ -5,6 +337,7 @@ class SyncEngine {
         this.isSyncing = false;
         this.onSyncComplete = null;
         this.onConflictDetected = null;
+        this.lastResolution = null;
         this.init();
     }
 
@@ -382,6 +715,22 @@ class SyncEngine {
             throw new Error('只有管理员可以复核冲突');
         }
 
+        const distribution = await db.get(STORES.DISTRIBUTIONS, conflict.distributionId);
+        const supply = distribution.supplyId ? await db.get(STORES.SUPPLIES, distribution.supplyId) : null;
+        const serverState = await db.get(STORES.SERVER_STATE, 'server_supplies');
+        const serverSupply = serverState && distribution.supplyId 
+            ? serverState.data.find(s => s.id === distribution.supplyId) 
+            : null;
+
+        const snapshot = {
+            conflict: JSON.parse(JSON.stringify(conflict)),
+            distribution: JSON.parse(JSON.stringify(distribution)),
+            supplyBefore: supply ? JSON.parse(JSON.stringify(supply)) : null,
+            serverSupplyBefore: serverSupply ? JSON.parse(JSON.stringify(serverSupply)) : null,
+            resolution,
+            timestamp: Date.now()
+        };
+
         conflict.status = resolution === 'approve' ? CONFLICT_STATUS.RESOLVED : CONFLICT_STATUS.REJECTED;
         conflict.resolvedBy = CURRENT_USER.id;
         conflict.resolvedByName = CURRENT_USER.name;
@@ -390,30 +739,29 @@ class SyncEngine {
 
         await db.put(STORES.CONFLICTS, conflict);
 
-        const distribution = await db.get(STORES.DISTRIBUTIONS, conflict.distributionId);
-        
         if (resolution === 'approve') {
             distribution.status = DISTRIBUTION_STATUS.SYNCED;
             distribution.syncedAt = Date.now();
+            distribution.resolvedBy = CURRENT_USER.id;
+            distribution.resolvedByName = CURRENT_USER.name;
+            distribution.resolvedAt = Date.now();
             
-            const supply = await db.get(STORES.SUPPLIES, distribution.supplyId);
             if (supply) {
                 supply.currentStock = Math.max(0, supply.currentStock - distribution.quantity);
                 await db.put(STORES.SUPPLIES, supply);
             }
 
-            const serverState = await db.get(STORES.SERVER_STATE, 'server_supplies');
-            if (serverState) {
-                const serverSupply = serverState.data.find(s => s.id === distribution.supplyId);
-                if (serverSupply) {
-                    serverSupply.currentStock = Math.max(0, serverSupply.currentStock - distribution.quantity);
-                    await db.put(STORES.SERVER_STATE, serverState);
-                }
+            if (serverState && serverSupply) {
+                serverSupply.currentStock = Math.max(0, serverSupply.currentStock - distribution.quantity);
+                await db.put(STORES.SERVER_STATE, serverState);
             }
         } else {
             distribution.status = DISTRIBUTION_STATUS.CONFLICTED;
             distribution.rejected = true;
             distribution.rejectedReason = '管理员驳回';
+            distribution.resolvedBy = CURRENT_USER.id;
+            distribution.resolvedByName = CURRENT_USER.name;
+            distribution.resolvedAt = Date.now();
         }
 
         await db.put(STORES.DISTRIBUTIONS, distribution);
@@ -425,6 +773,9 @@ class SyncEngine {
             }
         }
 
+        this.lastResolution = snapshot;
+        await this.saveLastResolution(snapshot);
+
         await addAuditLog('conflict_resolved', {
             conflictId,
             distributionId: conflict.distributionId,
@@ -433,6 +784,103 @@ class SyncEngine {
         });
 
         return conflict;
+    }
+
+    async saveLastResolution(snapshot) {
+        await db.put(STORES.SERVER_STATE, {
+            id: 'last_resolution',
+            data: snapshot,
+            timestamp: Date.now()
+        });
+    }
+
+    async loadLastResolution() {
+        const stored = await db.get(STORES.SERVER_STATE, 'last_resolution');
+        if (stored) {
+            this.lastResolution = stored.data;
+        }
+        return this.lastResolution;
+    }
+
+    async hasUndoableResolution() {
+        const last = this.lastResolution || await this.loadLastResolution();
+        return !!last;
+    }
+
+    async undoLastResolution() {
+        const snapshot = this.lastResolution || await this.loadLastResolution();
+        if (!snapshot) {
+            throw new Error('没有可撤销的操作');
+        }
+
+        if (CURRENT_USER.role !== ROLES.ADMIN) {
+            throw new Error('只有管理员可以撤销操作');
+        }
+
+        const { conflict, distribution, supplyBefore, serverSupplyBefore, resolution } = snapshot;
+
+        const conflictRestored = {
+            ...conflict,
+            status: CONFLICT_STATUS.PENDING,
+            resolvedBy: null,
+            resolvedByName: null,
+            resolvedAt: null,
+            resolution: null
+        };
+        await db.put(STORES.CONFLICTS, conflictRestored);
+
+        const distRestored = {
+            ...distribution,
+            status: DISTRIBUTION_STATUS.CONFLICTED,
+            syncedAt: null,
+            rejected: false,
+            rejectedReason: null,
+            resolvedBy: null,
+            resolvedByName: null,
+            resolvedAt: null
+        };
+        delete distRestored.rejected;
+        delete distRestored.rejectedReason;
+        await db.put(STORES.DISTRIBUTIONS, distRestored);
+
+        if (resolution === 'approve' && supplyBefore) {
+            await db.put(STORES.SUPPLIES, supplyBefore);
+        }
+
+        if (resolution === 'approve' && serverSupplyBefore) {
+            const serverState = await db.get(STORES.SERVER_STATE, 'server_supplies');
+            if (serverState) {
+                const idx = serverState.data.findIndex(s => s.id === serverSupplyBefore.id);
+                if (idx >= 0) {
+                    serverState.data[idx] = serverSupplyBefore;
+                    await db.put(STORES.SERVER_STATE, serverState);
+                }
+            }
+        }
+
+        const queueItem = {
+            id: generateId('queue'),
+            action: 'update_distribution',
+            data: distRestored,
+            status: QUEUE_STATUS.CONFLICTED,
+            conflictId: conflict.id,
+            timestamp: Date.now(),
+            retryCount: 0,
+            errorMessage: null
+        };
+        await db.put(STORES.OFFLINE_QUEUE, queueItem);
+
+        this.lastResolution = null;
+        await db.delete(STORES.SERVER_STATE, 'last_resolution');
+
+        await addAuditLog('conflict_undo', {
+            conflictId: conflict.id,
+            distributionId: distribution.id,
+            originalResolution: resolution,
+            undoneBy: CURRENT_USER.name
+        });
+
+        return conflictRestored;
     }
 
     async retryFailedItems() {

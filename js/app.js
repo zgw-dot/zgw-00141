@@ -31,6 +31,10 @@ async function initApp() {
         
         refreshDashboard();
         
+        if (typeof initImportHandlers === 'function') {
+            await initImportHandlers();
+        }
+        
         console.log('App initialized successfully');
         console.log('Current user:', CURRENT_USER.name, '(', CURRENT_USER.role === ROLES.ADMIN ? '管理员' : '志愿者', ')');
         

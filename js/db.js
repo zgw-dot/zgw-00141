@@ -191,7 +191,18 @@ const CONFLICT_TYPES = {
     STOCK_OVERFLOW: 'stock_overflow',
     DUPLICATE_DISTRIBUTION: 'duplicate_distribution',
     VERSION_CONFLICT: 'version_conflict',
-    PERMISSION_DENIED: 'permission_denied'
+    PERMISSION_DENIED: 'permission_denied',
+    INVALID_RESIDENT: 'invalid_resident',
+    INVALID_SUPPLY: 'invalid_supply',
+    DAILY_LIMIT_EXCEEDED: 'daily_limit_exceeded',
+    IMPORT_VALIDATION_ERROR: 'import_validation_error'
+};
+
+const IMPORT_SOURCES = {
+    MANUAL: 'manual',
+    CSV_IMPORT: 'csv_import',
+    JSON_IMPORT: 'json_import',
+    BATCH_IMPORT: 'batch_import'
 };
 
 const QUEUE_STATUS = {

@@ -26,7 +26,10 @@ class DataExporter {
             residentIdCard: residentMap.get(d.residentId)?.idCard || '',
             statusText: this.getStatusText(d.status),
             formattedDate: formatDate(d.timestamp),
-            syncedDateText: d.syncedAt ? formatDate(d.syncedAt) : ''
+            syncedDateText: d.syncedAt ? formatDate(d.syncedAt) : '',
+            importSourceText: d.importSource ? this.getImportSourceText(d.importSource) : '手动录入',
+            resolvedDateText: d.resolvedAt ? formatDate(d.resolvedAt) : '',
+            rejectedText: d.rejected ? '已驳回' : ''
         }));
 
         if (format === 'csv') {
@@ -53,7 +56,8 @@ class DataExporter {
             ...l,
             formattedDate: formatDate(l.timestamp),
             actionText: this.getActionText(l.action),
-            detailsText: JSON.stringify(l.details || {})
+            detailsText: JSON.stringify(l.details || {}),
+            userRoleText: this.getRoleText(l.userRole)
         }));
 
         if (format === 'csv') {
@@ -80,15 +84,40 @@ class DataExporter {
             'sync_error': '同步失败',
             'conflict_detected': '检测到冲突',
             'conflict_resolved': '冲突已解决',
-            'export_data': '导出数据'
+            'conflict_undo': '撤销冲突处理',
+            'export_data': '导出数据',
+            'import_distribution': '导入领取记录',
+            'import_conflict': '导入产生冲突',
+            'create_supply': '新增物资',
+            'update_supply': '更新物资',
+            'delete_supply': '删除物资'
         };
         return map[action] || action;
+    }
+
+    getImportSourceText(source) {
+        const map = {
+            [IMPORT_SOURCES.MANUAL]: '手动录入',
+            [IMPORT_SOURCES.CSV_IMPORT]: 'CSV导入',
+            [IMPORT_SOURCES.JSON_IMPORT]: 'JSON导入',
+            [IMPORT_SOURCES.BATCH_IMPORT]: '批量导入'
+        };
+        return map[source] || source;
+    }
+
+    getRoleText(role) {
+        const map = {
+            [ROLES.VOLUNTEER]: '志愿者',
+            [ROLES.ADMIN]: '管理员'
+        };
+        return map[role] || role;
     }
 
     exportToCSV(data) {
         const headers = [
             '记录ID', '居民姓名', '身份证号', '物资名称', '物资类型',
-            '领取数量', '领取时间', '状态', '同步时间', '操作员', '备注'
+            '领取数量', '领取时间', '状态', '同步时间', '操作员', 
+            '数据来源', '处理人', '处理时间', '驳回状态', '备注'
         ];
 
         const rows = data.map(d => [
@@ -102,6 +131,10 @@ class DataExporter {
             d.statusText,
             d.syncedDateText,
             d.operatorName || '',
+            d.importSourceText,
+            d.resolvedByName || '',
+            d.resolvedDateText,
+            d.rejectedText,
             (d.notes || '').replace(/,/g, '，')
         ]);
 
@@ -124,7 +157,7 @@ class DataExporter {
             d.formattedDate,
             d.actionText,
             d.userName || '',
-            d.userRole || '',
+            d.userRoleText || '',
             d.detailsText.replace(/,/g, '，').replace(/\n/g, ' ')
         ]);
 
@@ -168,9 +201,22 @@ class DataExporter {
         if (type === 'distributions') {
             content = await this.exportDistributions(format, startDate, endDate);
             filename = `领取记录_${dateStr}.${format}`;
-        } else {
+        } else if (type === 'audit') {
             content = await this.exportAuditLogs(format, startDate, endDate);
             filename = `审计日志_${dateStr}.${format}`;
+        } else if (type === 'both') {
+            const distContent = await this.exportDistributions(format, startDate, endDate);
+            const auditContent = await this.exportAuditLogs(format, startDate, endDate);
+            
+            this.downloadFile(distContent, `领取记录_${dateStr}.${format}`, 
+                format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8');
+            
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            this.downloadFile(auditContent, `审计日志_${dateStr}.${format}`,
+                format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8');
+            
+            return `领取记录_${dateStr}.${format}, 审计日志_${dateStr}.${format}`;
         }
 
         mimeType = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8';

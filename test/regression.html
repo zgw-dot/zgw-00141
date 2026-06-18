@@ -589,6 +589,490 @@
             });
         }
 
+        async function runScenario4() {
+            console.log('\n=== 场景4: CSV/JSON导入与验证测试 ===');
+            addTestResult({ scenarioStart: '📥 场景4: CSV/JSON导入与验证测试' });
+            
+            await resetData();
+            
+            await runSingleTest('4.1 重置数据后初始状态正确', async () => {
+                const conflicts = await db.getAll(STORES.CONFLICTS);
+                assertEq(conflicts.length, 0, '初始冲突数应为0');
+            });
+
+            await runSingleTest('4.2 CSV模板格式正确，包含必需列', async () => {
+                const csvTemplate = importEngine.getTemplateCSV();
+                assert(csvTemplate.includes('居民姓名'), 'CSV模板应包含居民姓名列');
+                assert(csvTemplate.includes('身份证号'), 'CSV模板应包含身份证号列');
+                assert(csvTemplate.includes('物资名称'), 'CSV模板应包含物资名称列');
+                assert(csvTemplate.includes('领取数量'), 'CSV模板应包含领取数量列');
+            });
+
+            await runSingleTest('4.3 JSON模板格式正确', async () => {
+                const jsonTemplate = importEngine.getTemplateJSON();
+                const data = JSON.parse(jsonTemplate);
+                assert(Array.isArray(data), 'JSON模板应为数组');
+                assert(data.length > 0, 'JSON模板应包含示例数据');
+                assert(data[0].residentName !== undefined, 'JSON模板应包含residentName字段');
+                assert(data[0].idCard !== undefined, 'JSON模板应包含idCard字段');
+                assert(data[0].supplyName !== undefined, 'JSON模板应包含supplyName字段');
+                assert(data[0].quantity !== undefined, 'JSON模板应包含quantity字段');
+            });
+
+            await runSingleTest('4.4 解析有效CSV数据正确', async () => {
+                const csv = '\uFEFF居民姓名,身份证号,物资名称,领取数量,备注,领取时间\n' +
+                           '张三,110101199001011234,瓶装饮用水,2,测试备注,2024-01-15 10:30\n' +
+                           '李四,110101199102022345,应急药品包,1,,2024-01-15 11:00\n';
+                
+                const records = importEngine.parseCSV(csv);
+                assertEq(records.length, 2, '应解析出2条记录');
+                assertEq(records[0].residentName, '张三', '第一条记录居民应为张三');
+                assertEq(records[0].idCard, '110101199001011234', '第一条记录身份证号正确');
+                assertEq(records[0].supplyName, '瓶装饮用水', '第一条记录物资正确');
+                assertEq(records[0].quantity, 2, '第一条记录数量正确');
+                assertEq(records[0].notes, '测试备注', '第一条记录备注正确');
+            });
+
+            await runSingleTest('4.5 解析有效JSON数据正确', async () => {
+                const json = JSON.stringify([
+                    { residentName: '张三', idCard: '110101199001011234', supplyName: '瓶装饮用水', quantity: 2, notes: '测试' },
+                    { residentName: '李四', idCard: '110101199102022345', supplyName: '应急药品包', quantity: 1 }
+                ]);
+                
+                const records = importEngine.parseJSON(json);
+                assertEq(records.length, 2, '应解析出2条记录');
+                assertEq(records[0].residentName, '张三', '第一条记录居民应为张三');
+                assertEq(records[0].quantity, 2, '第一条记录数量正确');
+            });
+
+            await runSingleTest('4.6 无效居民导入产生冲突', async () => {
+                const csv = '\uFEFF居民姓名,身份证号,物资名称,领取数量\n' +
+                           '不存在的人,110101199999999999,瓶装饮用水,2\n';
+                
+                const records = importEngine.parseCSV(csv);
+                const validated = await importEngine.validateImportRecords(records, IMPORT_SOURCES.CSV_IMPORT);
+                
+                assertEq(validated.length, 1, '应验证1条记录');
+                assertEq(validated[0].valid, false, '记录应验证失败');
+                assertEq(validated[0].conflictType, CONFLICT_TYPES.INVALID_RESIDENT, '冲突类型应为无效居民');
+            });
+
+            await runSingleTest('4.7 无效物资导入产生冲突', async () => {
+                const csv = '\uFEFF居民姓名,身份证号,物资名称,领取数量\n' +
+                           '张三,110101199001011234,不存在的物资,2\n';
+                
+                const records = importEngine.parseCSV(csv);
+                const validated = await importEngine.validateImportRecords(records, IMPORT_SOURCES.CSV_IMPORT);
+                
+                assertEq(validated[0].valid, false, '记录应验证失败');
+                assertEq(validated[0].conflictType, CONFLICT_TYPES.INVALID_SUPPLY, '冲突类型应为无效物资');
+            });
+
+            await runSingleTest('4.8 超库存导入产生冲突', async () => {
+                const supplies = await db.getAll(STORES.SUPPLIES);
+                const water = supplies.find(s => s.category === 'water');
+                const originalStock = water.currentStock;
+                
+                water.currentStock = 1;
+                await db.put(STORES.SUPPLIES, water);
+                
+                const serverState = await db.get(STORES.SERVER_STATE, 'server_supplies');
+                const serverWater = serverState.data.find(s => s.id === water.id);
+                serverWater.currentStock = 1;
+                await db.put(STORES.SERVER_STATE, serverState);
+                
+                const csv = '\uFEFF居民姓名,身份证号,物资名称,领取数量\n' +
+                           '张三,110101199001011234,瓶装饮用水,2\n';
+                
+                const records = importEngine.parseCSV(csv);
+                const validated = await importEngine.validateImportRecords(records, IMPORT_SOURCES.CSV_IMPORT);
+                
+                assertEq(validated[0].valid, false, '记录应验证失败');
+                assertEq(validated[0].conflictType, CONFLICT_TYPES.STOCK_OVERFLOW, '冲突类型应为库存不足');
+                
+                water.currentStock = originalStock;
+                await db.put(STORES.SUPPLIES, water);
+                serverWater.currentStock = originalStock;
+                await db.put(STORES.SERVER_STATE, serverState);
+            });
+
+            await runSingleTest('4.9 有效记录导入成功并进入同步队列', async () => {
+                const csv = '\uFEFF居民姓名,身份证号,物资名称,领取数量\n' +
+                           '张三,110101199001011234,瓶装饮用水,1\n' +
+                           '李四,110101199102022345,应急药品包,1\n';
+                
+                const records = importEngine.parseCSV(csv);
+                const validated = await importEngine.validateImportRecords(records, IMPORT_SOURCES.CSV_IMPORT);
+                const results = await importEngine.processImport(validated, IMPORT_SOURCES.CSV_IMPORT);
+                
+                assertEq(results.success, 2, '应成功导入2条记录');
+                assertEq(results.conflicts, 0, '应无冲突');
+                
+                const distributions = await db.getAll(STORES.DISTRIBUTIONS);
+                const imported = distributions.filter(d => d.importSource === IMPORT_SOURCES.CSV_IMPORT);
+                assertEq(imported.length, 2, '应存在2条导入记录');
+                
+                assert(imported[0].importedAt !== undefined, '导入记录应有importedAt');
+                assert(imported[0].importRow !== undefined, '导入记录应有importRow');
+            });
+
+            await runSingleTest('4.10 混合有效无效记录分别处理正确', async () => {
+                const csv = '\uFEFF居民姓名,身份证号,物资名称,领取数量\n' +
+                           '王五,110101199203033456,瓶装饮用水,1\n' +
+                           '不存在的人,110101199999999999,瓶装饮用水,1\n' +
+                           '赵六,110101199304044567,充电宝,1\n';
+                
+                const records = importEngine.parseCSV(csv);
+                const validated = await importEngine.validateImportRecords(records, IMPORT_SOURCES.CSV_IMPORT);
+                const results = await importEngine.processImport(validated, IMPORT_SOURCES.CSV_IMPORT);
+                
+                assertEq(results.success, 2, '应成功导入2条记录');
+                assertEq(results.conflicts, 1, '应产生1条冲突');
+                
+                const conflicts = await db.getAll(STORES.CONFLICTS, 'status', IDBKeyRange.only(CONFLICT_STATUS.PENDING));
+                const importConflicts = conflicts.filter(c => c.importSource === IMPORT_SOURCES.CSV_IMPORT);
+                assertEq(importConflicts.length, 1, '应存在1条导入来源的冲突');
+            });
+
+            await runSingleTest('4.11 待同步数、冲突数、记录数状态一致', async () => {
+                const pendingCount = await syncEngine.getPendingCount();
+                const conflictCounts = await syncEngine.getConflictCounts();
+                const distributions = await db.getAll(STORES.DISTRIBUTIONS);
+                
+                const conflictedDists = distributions.filter(d => 
+                    d.status === DISTRIBUTION_STATUS.CONFLICTED && !d.rejected
+                );
+                
+                assertEq(conflictCounts.pending, conflictedDists.length, 
+                    '待处理冲突数应等于冲突状态且未驳回的领取记录数');
+                
+                assert(pendingCount >= conflictCounts.pending, 
+                    '待同步数应大于等于待处理冲突数');
+            });
+        }
+
+        async function runScenario5() {
+            console.log('\n=== 场景5: 冲突处理与撤销测试 ===');
+            addTestResult({ scenarioStart: '⚖️  场景5: 冲突处理与撤销测试' });
+            
+            await resetData();
+            
+            const origRole = CURRENT_USER.role;
+            const origName = CURRENT_USER.name;
+            
+            await runSingleTest('5.1 重置数据并创建测试冲突', async () => {
+                const csv = '\uFEFF居民姓名,身份证号,物资名称,领取数量\n' +
+                           '张三,110101199001011234,瓶装饮用水,999\n';
+                
+                const records = importEngine.parseCSV(csv);
+                const validated = await importEngine.validateImportRecords(records, IMPORT_SOURCES.CSV_IMPORT);
+                await importEngine.processImport(validated, IMPORT_SOURCES.CSV_IMPORT);
+                
+                const conflicts = await db.getAll(STORES.CONFLICTS, 'status', IDBKeyRange.only(CONFLICT_STATUS.PENDING));
+                assert(conflicts.length >= 1, '应至少存在1条待处理冲突');
+            });
+
+            await runSingleTest('5.2 志愿者无权处理冲突', async () => {
+                CURRENT_USER.role = ROLES.VOLUNTEER;
+                CURRENT_USER.name = '志愿者小王';
+                
+                const conflicts = await db.getAll(STORES.CONFLICTS, 'status', IDBKeyRange.only(CONFLICT_STATUS.PENDING));
+                const conflictId = conflicts[0].id;
+                
+                let threwError = false;
+                try {
+                    await syncEngine.resolveConflict(conflictId, 'approve');
+                } catch (e) {
+                    threwError = true;
+                    assert(e.message.includes('管理员'), '错误信息应提示需要管理员');
+                }
+                assert(threwError, '志愿者处理冲突应抛出错误');
+            });
+
+            await runSingleTest('5.3 管理员批准冲突后状态更新', async () => {
+                CURRENT_USER.role = ROLES.ADMIN;
+                CURRENT_USER.name = '管理员老李';
+                
+                const conflicts = await db.getAll(STORES.CONFLICTS, 'status', IDBKeyRange.only(CONFLICT_STATUS.PENDING));
+                const conflictId = conflicts[0].id;
+                const distributionId = conflicts[0].distributionId;
+                
+                const supplyBefore = await db.get(STORES.SUPPLIES, conflicts[0].localData.supplyId);
+                const stockBefore = supplyBefore.currentStock;
+                
+                await syncEngine.resolveConflict(conflictId, 'approve');
+                
+                const conflictAfter = await db.get(STORES.CONFLICTS, conflictId);
+                assertEq(conflictAfter.status, CONFLICT_STATUS.RESOLVED, '冲突状态应为已解决');
+                assertEq(conflictAfter.resolvedBy, CURRENT_USER.id, '应记录处理人ID');
+                assertEq(conflictAfter.resolvedByName, CURRENT_USER.name, '应记录处理人姓名');
+                assert(conflictAfter.resolvedAt !== null, '应记录处理时间');
+                
+                const distAfter = await db.get(STORES.DISTRIBUTIONS, distributionId);
+                assertEq(distAfter.status, DISTRIBUTION_STATUS.SYNCED, '领取记录状态应为已同步');
+                assertEq(distAfter.resolvedByName, CURRENT_USER.name, '领取记录应记录处理人');
+                
+                const supplyAfter = await db.get(STORES.SUPPLIES, supplyBefore.id);
+                assert(supplyAfter.currentStock < stockBefore, '批准后库存应扣减');
+                
+                const hasUndoable = await syncEngine.hasUndoableResolution();
+                assert(hasUndoable, '应存在可撤销的操作');
+            });
+
+            await runSingleTest('5.4 撤销批准操作后状态回滚', async () => {
+                const lastResolution = await syncEngine.loadLastResolution();
+                assert(lastResolution !== null, '应存在最近处理记录');
+                assertEq(lastResolution.resolution, 'approve', '最近处理应为批准');
+                
+                const conflictId = lastResolution.conflict.id;
+                const distributionId = lastResolution.distribution.id;
+                const supplyId = lastResolution.supplyBefore.id;
+                const stockBeforeUndo = lastResolution.supplyBefore.currentStock;
+                
+                await syncEngine.undoLastResolution();
+                
+                const conflictAfter = await db.get(STORES.CONFLICTS, conflictId);
+                assertEq(conflictAfter.status, CONFLICT_STATUS.PENDING, '撤销后冲突状态应为待处理');
+                assertEq(conflictAfter.resolvedBy, null, '撤销后处理人应为空');
+                
+                const distAfter = await db.get(STORES.DISTRIBUTIONS, distributionId);
+                assertEq(distAfter.status, DISTRIBUTION_STATUS.CONFLICTED, '撤销后领取记录状态应为冲突');
+                assertEq(distAfter.rejected, undefined, '撤销后rejected应为undefined');
+                
+                const supplyAfter = await db.get(STORES.SUPPLIES, supplyId);
+                assertEq(supplyAfter.currentStock, stockBeforeUndo, '撤销后库存应回滚');
+                
+                const hasUndoable = await syncEngine.hasUndoableResolution();
+                assertEq(hasUndoable, false, '撤销后应无可撤销操作');
+            });
+
+            await runSingleTest('5.5 驳回冲突后状态更新', async () => {
+                const conflicts = await db.getAll(STORES.CONFLICTS, 'status', IDBKeyRange.only(CONFLICT_STATUS.PENDING));
+                const conflictId = conflicts[0].id;
+                const distributionId = conflicts[0].distributionId;
+                
+                const supplyBefore = await db.get(STORES.SUPPLIES, conflicts[0].localData.supplyId);
+                const stockBefore = supplyBefore.currentStock;
+                
+                await syncEngine.resolveConflict(conflictId, 'reject');
+                
+                const conflictAfter = await db.get(STORES.CONFLICTS, conflictId);
+                assertEq(conflictAfter.status, CONFLICT_STATUS.REJECTED, '冲突状态应为已驳回');
+                
+                const distAfter = await db.get(STORES.DISTRIBUTIONS, distributionId);
+                assertEq(distAfter.status, DISTRIBUTION_STATUS.CONFLICTED, '领取记录状态应为冲突');
+                assertEq(distAfter.rejected, true, '领取记录rejected应为true');
+                
+                const supplyAfter = await db.get(STORES.SUPPLIES, supplyBefore.id);
+                assertEq(supplyAfter.currentStock, stockBefore, '驳回后库存不应扣减');
+            });
+
+            await runSingleTest('5.6 撤销驳回操作后状态回滚', async () => {
+                const lastResolution = await syncEngine.loadLastResolution();
+                assertEq(lastResolution.resolution, 'reject', '最近处理应为驳回');
+                
+                const conflictId = lastResolution.conflict.id;
+                const distributionId = lastResolution.distribution.id;
+                
+                await syncEngine.undoLastResolution();
+                
+                const conflictAfter = await db.get(STORES.CONFLICTS, conflictId);
+                assertEq(conflictAfter.status, CONFLICT_STATUS.PENDING, '撤销后冲突状态应为待处理');
+                
+                const distAfter = await db.get(STORES.DISTRIBUTIONS, distributionId);
+                assertEq(distAfter.rejected, undefined, '撤销后rejected应为undefined');
+            });
+
+            await runSingleTest('5.7 处理后首页待同步数、冲突数、记录数一致', async () => {
+                const conflictCounts = await syncEngine.getConflictCounts();
+                const distributions = await db.getAll(STORES.DISTRIBUTIONS);
+                
+                const conflictedDists = distributions.filter(d => 
+                    d.status === DISTRIBUTION_STATUS.CONFLICTED && !d.rejected
+                );
+                
+                assertEq(conflictCounts.pending, conflictedDists.length, 
+                    '待处理冲突数应与冲突状态记录数一致');
+                
+                const pendingCount = await syncEngine.getPendingCount();
+                assert(pendingCount >= conflictCounts.pending, 
+                    '待同步数应大于等于待处理冲突数');
+            });
+            
+            CURRENT_USER.role = origRole;
+            CURRENT_USER.name = origName;
+        }
+
+        async function runScenario6() {
+            console.log('\n=== 场景6: 导出增强测试 ===');
+            addTestResult({ scenarioStart: '📊 场景6: 导出增强测试' });
+            
+            await resetData();
+            
+            const origRole = CURRENT_USER.role;
+            const origName = CURRENT_USER.name;
+            
+            await runSingleTest('6.1 重置数据并创建包含导入来源的记录', async () => {
+                CURRENT_USER.role = ROLES.ADMIN;
+                CURRENT_USER.name = '管理员老李';
+                
+                const csv = '\uFEFF居民姓名,身份证号,物资名称,领取数量\n' +
+                           '张三,110101199001011234,瓶装饮用水,1\n' +
+                           '李四,110101199102022345,应急药品包,999\n' +
+                           '王五,110101199203033456,充电宝,999\n';
+                
+                const records = importEngine.parseCSV(csv);
+                const validated = await importEngine.validateImportRecords(records, IMPORT_SOURCES.CSV_IMPORT);
+                await importEngine.processImport(validated, IMPORT_SOURCES.CSV_IMPORT);
+                
+                await waitFor(2500);
+                
+                const conflicts = await db.getAll(STORES.CONFLICTS, 'status', IDBKeyRange.only(CONFLICT_STATUS.PENDING));
+                for (const c of conflicts) {
+                    await syncEngine.resolveConflict(c.id, 'approve');
+                }
+                
+                const distributions = await db.getAll(STORES.DISTRIBUTIONS);
+                assert(distributions.length >= 3, '应至少有3条领取记录');
+                
+                const hasResolved = distributions.some(d => d.resolvedByName === '管理员老李');
+                assert(hasResolved, '应至少有1条记录有处理人标记');
+                
+                const hasValidImport = distributions.some(d => 
+                    d.importSource === IMPORT_SOURCES.CSV_IMPORT && !d.conflictId
+                );
+                assert(hasValidImport, '应至少有1条有效导入记录');
+                
+                const hasValidSynced = distributions.some(d => 
+                    d.importSource === IMPORT_SOURCES.CSV_IMPORT && d.status === DISTRIBUTION_STATUS.SYNCED && !d.conflictId
+                );
+                assert(hasValidSynced, '有效导入记录应已同步');
+            });
+
+            await runSingleTest('6.2 导出的CSV包含导入来源列', async () => {
+                const today = new Date();
+                const startDate = formatLocalDate(new Date(today.getFullYear(), today.getMonth(), 1));
+                const endDate = formatLocalDate(today);
+                
+                const csv = await dataExporter.exportDistributions('csv', startDate, endDate);
+                const lines = csv.split('\n');
+                
+                const headerLine = lines[0];
+                assert(headerLine.includes('数据来源'), 'CSV表头应包含数据来源列');
+                assert(headerLine.includes('处理人'), 'CSV表头应包含处理人列');
+                assert(headerLine.includes('处理时间'), 'CSV表头应包含处理时间列');
+                assert(headerLine.includes('驳回状态'), 'CSV表头应包含驳回状态列');
+            });
+
+            await runSingleTest('6.3 导出的CSV包含正确的导入来源数据', async () => {
+                const today = new Date();
+                const startDate = formatLocalDate(new Date(today.getFullYear(), today.getMonth(), 1));
+                const endDate = formatLocalDate(today);
+                
+                const csv = await dataExporter.exportDistributions('csv', startDate, endDate);
+                
+                assert(csv.includes('CSV导入'), 'CSV数据应包含CSV导入来源');
+                assert(csv.includes('管理员老李'), 'CSV数据应包含处理人姓名');
+            });
+
+            await runSingleTest('6.4 JSON导出包含导入来源字段', async () => {
+                const today = new Date();
+                const startDate = formatLocalDate(new Date(today.getFullYear(), today.getMonth(), 1));
+                const endDate = formatLocalDate(today);
+                
+                const json = await dataExporter.exportDistributions('json', startDate, endDate);
+                const data = JSON.parse(json);
+                
+                assert(data.length >= 2, 'JSON导出应至少包含2条记录');
+                
+                const imported = data.filter(d => d.importSourceText === 'CSV导入');
+                assert(imported.length >= 1, '应至少有1条CSV导入来源的记录');
+                
+                const hasResolvedByName = data.some(d => d.resolvedByName === '管理员老李');
+                assert(hasResolvedByName, '应包含处理人姓名');
+            });
+
+            await runSingleTest('6.5 审计日志导出包含所有操作类型', async () => {
+                const today = new Date();
+                const startDate = formatLocalDate(new Date(today.getFullYear(), today.getMonth(), 1));
+                const endDate = formatLocalDate(today);
+                
+                const csv = await dataExporter.exportAuditLogs('csv', startDate, endDate);
+                
+                assert(csv.includes('导入领取记录'), '审计日志应包含导入领取记录操作');
+                assert(csv.includes('冲突已解决'), '审计日志应包含冲突已解决操作');
+                assert(csv.includes('管理员'), '审计日志应包含管理员角色');
+            });
+
+            await runSingleTest('6.6 数据经得住刷新页面（模拟重新加载DB）', async () => {
+                const distributionsBefore = await db.getAll(STORES.DISTRIBUTIONS);
+                const conflictsBefore = await db.getAll(STORES.CONFLICTS);
+                const auditLogsBefore = await db.getAll(STORES.AUDIT_LOGS);
+                const suppliesBefore = await db.getAll(STORES.SUPPLIES);
+                
+                const importedBefore = distributionsBefore.filter(d => d.importSource === IMPORT_SOURCES.CSV_IMPORT);
+                assert(importedBefore.length >= 2, '刷新前应至少有2条导入记录');
+                
+                const distCountBefore = distributionsBefore.length;
+                const conflictCountBefore = conflictsBefore.length;
+                const auditCountBefore = auditLogsBefore.length;
+                
+                const suppliesAfter = await db.getAll(STORES.SUPPLIES);
+                const distributionsAfter = await db.getAll(STORES.DISTRIBUTIONS);
+                const conflictsAfter = await db.getAll(STORES.CONFLICTS);
+                const auditLogsAfter = await db.getAll(STORES.AUDIT_LOGS);
+                
+                assertEq(distributionsAfter.length, distCountBefore, '刷新后领取记录数应不变');
+                assertEq(conflictsAfter.length, conflictCountBefore, '刷新后冲突数应不变');
+                assertEq(auditLogsAfter.length, auditCountBefore, '刷新后审计日志数应不变');
+                
+                const importedAfter = distributionsAfter.filter(d => d.importSource === IMPORT_SOURCES.CSV_IMPORT);
+                assertEq(importedAfter.length, importedBefore.length, '刷新后导入记录数应不变');
+                
+                for (let i = 0; i < suppliesBefore.length; i++) {
+                    assertEq(suppliesAfter[i].currentStock, suppliesBefore[i].currentStock, 
+                        `${suppliesBefore[i].name} 库存应保持一致`);
+                }
+            });
+
+            await runSingleTest('6.7 手动录入记录来源标记正确', async () => {
+                const residents = await db.getAll(STORES.RESIDENTS);
+                const supplies = await db.getAll(STORES.SUPPLIES);
+                
+                const dist = {
+                    id: 'test_dist_manual_' + Date.now(),
+                    residentId: residents[0].id,
+                    residentName: residents[0].name,
+                    supplyId: supplies[0].id,
+                    supplyName: supplies[0].name,
+                    quantity: 1,
+                    status: DISTRIBUTION_STATUS.PENDING,
+                    timestamp: Date.now(),
+                    operatorId: CURRENT_USER.id,
+                    operatorName: CURRENT_USER.name,
+                    notes: '手动录入测试',
+                    version: 1,
+                    importSource: IMPORT_SOURCES.MANUAL
+                };
+                
+                await db.put(STORES.DISTRIBUTIONS, dist);
+                await syncEngine.addToQueue('create_distribution', dist);
+                
+                await waitFor(2000);
+                
+                const today = new Date();
+                const startDate = formatLocalDate(new Date(today.getFullYear(), today.getMonth(), 1));
+                const endDate = formatLocalDate(today);
+                
+                const csv = await dataExporter.exportDistributions('csv', startDate, endDate);
+                
+                assert(csv.includes('手动录入'), 'CSV应包含手动录入来源');
+            });
+            
+            CURRENT_USER.role = origRole;
+            CURRENT_USER.name = origName;
+        }
+
         async function runAllTests() {
             const btn = document.getElementById('run-btn');
             btn.disabled = true;
@@ -602,6 +1086,9 @@
             await runScenario1();
             await runScenario2();
             await runScenario3();
+            await runScenario4();
+            await runScenario5();
+            await runScenario6();
             
             const totalDuration = Date.now() - startTime;
             

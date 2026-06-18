@@ -361,7 +361,8 @@ async function submitDistribution() {
             operatorId: CURRENT_USER.id,
             operatorName: CURRENT_USER.name,
             notes: document.getElementById('distribution-notes').value.trim() || null,
-            version: 1
+            version: 1,
+            importSource: IMPORT_SOURCES.MANUAL
         };
         
         await db.put(STORES.DISTRIBUTIONS, distribution);
@@ -652,16 +653,20 @@ async function filterHistory() {
                           d.status === DISTRIBUTION_STATUS.PENDING ? 'pending' : 'conflicted';
         const statusText = d.status === DISTRIBUTION_STATUS.SYNCED ? '已同步' : 
                           d.status === DISTRIBUTION_STATUS.PENDING ? '待同步' : '冲突';
+        const sourceBadge = d.importSource 
+            ? `<span class="conflict-source" style="background: rgba(6, 182, 212, 0.1); color: var(--info); padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px;">${getImportSourceLabel(d.importSource)}</span>`
+            : '';
         
         return `
             <div class="history-item">
                 <div class="history-header">
-                    <div class="history-name">${d.residentName || '未知居民'}</div>
+                    <div class="history-name">${d.residentName || '未知居民'}${sourceBadge}</div>
                     <span class="status-badge ${statusClass}">${statusText}</span>
                 </div>
                 <div class="history-supply">${d.supplyName || '未知物资'}</div>
                 <div class="history-quantity">领取数量: ${d.quantity} ${supply ? supply.unit : ''}</div>
                 ${d.notes ? `<div class="history-quantity" style="color: var(--text-secondary); margin-top: 4px;">备注: ${d.notes}</div>` : ''}
+                ${d.resolvedByName ? `<div class="history-quantity" style="color: var(--text-secondary); margin-top: 4px;">处理人: ${d.resolvedByName}${d.resolvedAt ? ` (${formatDate(d.resolvedAt)})` : ''}</div>` : ''}
                 ${d.rejected ? `<div class="history-quantity" style="color: var(--danger); margin-top: 4px;">状态: ${d.rejectedReason || '已驳回'}</div>` : ''}
                 <div class="history-footer">
                     <span class="history-time">${formatDate(d.timestamp)}</span>
@@ -683,24 +688,35 @@ async function refreshExportView() {
 }
 
 async function updateExportStats() {
-    const distributions = await db.getAll(STORES.DISTRIBUTIONS);
+    const exportType = document.querySelector('input[name="export-type"]:checked')?.value || 'distributions';
     
-    const total = distributions.length;
-    const synced = distributions.filter(d => d.status === DISTRIBUTION_STATUS.SYNCED).length;
-    const conflicted = distributions.filter(d => d.status === DISTRIBUTION_STATUS.CONFLICTED).length;
-    
-    document.getElementById('export-total').textContent = total;
-    document.getElementById('export-synced').textContent = synced;
-    document.getElementById('export-conflicted').textContent = conflicted;
+    if (exportType === 'distributions' || exportType === 'both') {
+        const distributions = await db.getAll(STORES.DISTRIBUTIONS);
+        
+        const total = distributions.length;
+        const synced = distributions.filter(d => d.status === DISTRIBUTION_STATUS.SYNCED).length;
+        const conflicted = distributions.filter(d => d.status === DISTRIBUTION_STATUS.CONFLICTED).length;
+        
+        document.getElementById('export-total').textContent = total;
+        document.getElementById('export-synced').textContent = synced;
+        document.getElementById('export-conflicted').textContent = conflicted;
+    } else {
+        const logs = await db.getAll(STORES.AUDIT_LOGS);
+        
+        document.getElementById('export-total').textContent = logs.length;
+        document.getElementById('export-synced').textContent = '-';
+        document.getElementById('export-conflicted').textContent = '-';
+    }
 }
 
 async function exportData() {
+    const exportType = document.querySelector('input[name="export-type"]:checked')?.value || 'distributions';
     const format = document.querySelector('input[name="export-format"]:checked')?.value || 'csv';
     const startDate = document.getElementById('export-start-date').value;
     const endDate = document.getElementById('export-end-date').value;
     
     try {
-        const filename = await dataExporter.exportAndDownload('distributions', format, startDate, endDate);
+        const filename = await dataExporter.exportAndDownload(exportType, format, startDate, endDate);
         showToast(`已导出: ${filename}`);
     } catch (error) {
         showToast('导出失败: ' + error.message);
@@ -893,8 +909,392 @@ async function deleteSupply(supplyId) {
     }
 }
 
+let currentImportData = null;
+let currentValidatedRecords = null;
+
+async function initImportHandlers() {
+    const fileInput = document.getElementById('import-file');
+    if (fileInput) {
+        fileInput.addEventListener('change', handleFileSelect);
+    }
+    await syncEngine.loadLastResolution();
+    await updateUndoButton();
+}
+
+async function handleFileSelect(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const format = document.querySelector('input[name="import-format"]:checked')?.value || 'csv';
+    const importSource = format === 'csv' ? IMPORT_SOURCES.CSV_IMPORT : IMPORT_SOURCES.JSON_IMPORT;
+
+    try {
+        const content = await readFileAsText(file);
+        let records;
+
+        if (format === 'csv') {
+            records = importEngine.parseCSV(content);
+        } else {
+            records = importEngine.parseJSON(content);
+        }
+
+        if (records.length === 0) {
+            throw new Error('文件中没有有效数据');
+        }
+
+        currentImportData = records;
+        currentValidatedRecords = await importEngine.validateImportRecords(records, importSource);
+
+        renderImportPreview(currentValidatedRecords);
+
+    } catch (error) {
+        showToast('导入失败: ' + error.message);
+        console.error('Import error:', error);
+    } finally {
+        e.target.value = '';
+    }
+}
+
+function readFileAsText(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(file, 'UTF-8');
+    });
+}
+
+function renderImportPreview(validatedRecords) {
+    const previewEl = document.getElementById('import-preview');
+    const contentEl = document.getElementById('import-preview-content');
+    const countBadge = document.getElementById('import-count-badge');
+    const confirmBtn = document.getElementById('confirm-import-btn');
+
+    if (!previewEl || !contentEl) return;
+
+    const validCount = validatedRecords.filter(r => r.valid).length;
+    const errorCount = validatedRecords.filter(r => !r.valid).length;
+
+    countBadge.textContent = validatedRecords.length;
+    confirmBtn.disabled = validatedRecords.length === 0;
+
+    const typeLabels = {
+        [CONFLICT_TYPES.STOCK_OVERFLOW]: '库存不足',
+        [CONFLICT_TYPES.DUPLICATE_DISTRIBUTION]: '重复领取',
+        [CONFLICT_TYPES.DAILY_LIMIT_EXCEEDED]: '超每日限领',
+        [CONFLICT_TYPES.INVALID_RESIDENT]: '居民不存在',
+        [CONFLICT_TYPES.INVALID_SUPPLY]: '物资不存在',
+        [CONFLICT_TYPES.PERMISSION_DENIED]: '权限不足',
+        [CONFLICT_TYPES.IMPORT_VALIDATION_ERROR]: '验证错误',
+        [CONFLICT_TYPES.VERSION_CONFLICT]: '版本冲突'
+    };
+
+    contentEl.innerHTML = `
+        <div class="import-preview-summary" style="margin-bottom: 12px; font-size: 13px;">
+            <span style="color: var(--success);">✓ 可导入: ${validCount} 条</span>
+            ${errorCount > 0 ? ` | <span style="color: var(--danger);">✗ 需复核: ${errorCount} 条</span>` : ''}
+        </div>
+        <div class="import-preview-table">
+            <table>
+                <thead>
+                    <tr>
+                        <th>行号</th>
+                        <th>居民</th>
+                        <th>物资</th>
+                        <th>数量</th>
+                        <th>状态</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${validatedRecords.map(r => {
+                        const rowClass = !r.valid ? 'error' : (r.warnings.length > 0 ? 'warning' : '');
+                        const statusText = !r.valid 
+                            ? `<span style="color: var(--danger);">${typeLabels[r.conflictType] || '错误'}</span>`
+                            : (r.warnings.length > 0 
+                                ? `<span style="color: var(--warning);">有警告</span>`
+                                : `<span style="color: var(--success);">正常</span>`);
+                        
+                        return `
+                            <tr class="${rowClass}">
+                                <td>${r.rowIndex}</td>
+                                <td>${r.residentName}</td>
+                                <td>${r.supplyName}</td>
+                                <td>${r.quantity}</td>
+                                <td>${statusText}</td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+
+    previewEl.style.display = 'block';
+}
+
+async function confirmImport() {
+    if (!currentValidatedRecords) return;
+
+    const format = document.querySelector('input[name="import-format"]:checked')?.value || 'csv';
+    const importSource = format === 'csv' ? IMPORT_SOURCES.CSV_IMPORT : IMPORT_SOURCES.JSON_IMPORT;
+
+    try {
+        const results = await importEngine.processImport(currentValidatedRecords, importSource);
+
+        const resultsEl = document.getElementById('import-results');
+        if (resultsEl) {
+            let resultClass = 'success';
+            if (results.errors > 0) resultClass = 'error';
+            else if (results.conflicts > 0) resultClass = 'warning';
+
+            resultsEl.className = `import-results ${resultClass}`;
+            resultsEl.innerHTML = `
+                <div style="font-weight: 600; margin-bottom: 8px;">导入完成</div>
+                <div style="font-size: 13px; color: var(--text-secondary);">
+                    成功导入: ${results.success} 条<br>
+                    进入复核: ${results.conflicts} 条
+                </div>
+            `;
+            resultsEl.style.display = 'block';
+        }
+
+        showToast(`导入完成: ${results.success} 条成功, ${results.conflicts} 条需复核`);
+
+        cancelImport();
+        refreshDashboard();
+
+    } catch (error) {
+        showToast('导入失败: ' + error.message);
+        console.error('Confirm import error:', error);
+    }
+}
+
+function cancelImport() {
+    currentImportData = null;
+    currentValidatedRecords = null;
+
+    const previewEl = document.getElementById('import-preview');
+    if (previewEl) {
+        previewEl.style.display = 'none';
+    }
+}
+
+function downloadImportTemplate() {
+    const format = document.querySelector('input[name="import-format"]:checked')?.value || 'csv';
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+
+    let content, filename, mimeType;
+
+    if (format === 'csv') {
+        content = importEngine.getTemplateCSV();
+        filename = `导入模板_${dateStr}.csv`;
+        mimeType = 'text/csv;charset=utf-8';
+    } else {
+        content = importEngine.getTemplateJSON();
+        filename = `导入模板_${dateStr}.json`;
+        mimeType = 'application/json;charset=utf-8';
+    }
+
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    showToast(`已下载模板: ${filename}`);
+}
+
+async function updateUndoButton() {
+    const undoBtn = document.getElementById('undo-btn');
+    if (!undoBtn) return;
+
+    const hasUndoable = await syncEngine.hasUndoableResolution();
+    undoBtn.disabled = !hasUndoable || CURRENT_USER.role !== ROLES.ADMIN;
+}
+
+async function openUndoModal() {
+    const lastResolution = await syncEngine.loadLastResolution();
+    if (!lastResolution) {
+        showToast('没有可撤销的操作');
+        return;
+    }
+
+    const infoEl = document.getElementById('last-resolution-info');
+    const actionBtn = document.getElementById('undo-action-btn');
+
+    if (infoEl) {
+        const { conflict, distribution, resolution, timestamp } = lastResolution;
+        const resolutionClass = resolution === 'approve' ? 'resolution-approved' : 'resolution-rejected';
+        const resolutionText = resolution === 'approve' ? '批准' : '驳回';
+
+        infoEl.innerHTML = `
+            <div class="undo-resolution-info">
+                <div class="info-row">
+                    <span class="info-label">处理时间</span>
+                    <span class="info-value">${formatDate(timestamp)}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">冲突类型</span>
+                    <span class="info-value">${getConflictTypeLabel(conflict.conflictType)}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">居民</span>
+                    <span class="info-value">${distribution.residentName || '未知'}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">物资</span>
+                    <span class="info-value">${distribution.supplyName || '未知'}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">数量</span>
+                    <span class="info-value">${distribution.quantity}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">处理结果</span>
+                    <span class="info-value ${resolutionClass}">${resolutionText}</span>
+                </div>
+                ${conflict.importSource ? `
+                <div class="info-row">
+                    <span class="info-label">来源</span>
+                    <span class="info-value">${getImportSourceLabel(conflict.importSource)}</span>
+                </div>
+                ` : ''}
+            </div>
+        `;
+    }
+
+    if (actionBtn) {
+        actionBtn.disabled = CURRENT_USER.role !== ROLES.ADMIN;
+    }
+
+    const modal = document.getElementById('undo-modal');
+    if (modal) {
+        modal.style.display = 'flex';
+    }
+}
+
+function closeUndoModal() {
+    const modal = document.getElementById('undo-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+async function executeUndo() {
+    try {
+        await syncEngine.undoLastResolution();
+        showToast('已撤销上次操作');
+        closeUndoModal();
+        refreshConflictsView();
+        refreshDashboard();
+        await updateUndoButton();
+    } catch (error) {
+        showToast(error.message);
+        console.error('Undo error:', error);
+    }
+}
+
+function getConflictTypeLabel(type) {
+    const labels = {
+        [CONFLICT_TYPES.STOCK_OVERFLOW]: '库存不足',
+        [CONFLICT_TYPES.DUPLICATE_DISTRIBUTION]: '重复领取',
+        [CONFLICT_TYPES.DAILY_LIMIT_EXCEEDED]: '超每日限领',
+        [CONFLICT_TYPES.INVALID_RESIDENT]: '居民不存在',
+        [CONFLICT_TYPES.INVALID_SUPPLY]: '物资不存在',
+        [CONFLICT_TYPES.PERMISSION_DENIED]: '权限不足',
+        [CONFLICT_TYPES.IMPORT_VALIDATION_ERROR]: '导入验证错误',
+        [CONFLICT_TYPES.VERSION_CONFLICT]: '版本冲突'
+    };
+    return labels[type] || type;
+}
+
+function getImportSourceLabel(source) {
+    const labels = {
+        [IMPORT_SOURCES.MANUAL]: '手动录入',
+        [IMPORT_SOURCES.CSV_IMPORT]: 'CSV导入',
+        [IMPORT_SOURCES.JSON_IMPORT]: 'JSON导入',
+        [IMPORT_SOURCES.BATCH_IMPORT]: '批量导入'
+    };
+    return labels[source] || source;
+}
+
+async function refreshConflictsView() {
+    const conflictCounts = await syncEngine.getConflictCounts();
+    
+    document.getElementById('pending-conflicts').textContent = conflictCounts.pending;
+    document.getElementById('resolved-conflicts').textContent = conflictCounts.resolved;
+    document.getElementById('rejected-conflicts').textContent = conflictCounts.rejected;
+    
+    await updateUndoButton();
+    
+    const listEl = document.getElementById('conflict-list');
+    if (!listEl) return;
+    
+    const conflicts = await db.getAll(STORES.CONFLICTS, 'status', IDBKeyRange.only(CONFLICT_STATUS.PENDING));
+    conflicts.sort((a, b) => b.timestamp - a.timestamp);
+    
+    if (conflicts.length === 0) {
+        listEl.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-icon">✅</div>
+                <div class="empty-text">暂无待处理冲突</div>
+            </div>
+        `;
+        return;
+    }
+    
+    const distributions = await db.getAll(STORES.DISTRIBUTIONS);
+    const distMap = new Map(distributions.map(d => [d.id, d]));
+    
+    const typeLabels = {
+        [CONFLICT_TYPES.STOCK_OVERFLOW]: '库存不足',
+        [CONFLICT_TYPES.DUPLICATE_DISTRIBUTION]: '重复领取',
+        [CONFLICT_TYPES.VERSION_CONFLICT]: '数据冲突',
+        [CONFLICT_TYPES.PERMISSION_DENIED]: '权限不足',
+        [CONFLICT_TYPES.INVALID_RESIDENT]: '居民不存在',
+        [CONFLICT_TYPES.INVALID_SUPPLY]: '物资不存在',
+        [CONFLICT_TYPES.DAILY_LIMIT_EXCEEDED]: '超每日限领',
+        [CONFLICT_TYPES.IMPORT_VALIDATION_ERROR]: '导入错误'
+    };
+    
+    listEl.innerHTML = conflicts.map(c => {
+        const dist = distMap.get(c.distributionId);
+        const typeLabel = typeLabels[c.conflictType] || c.conflictType;
+        const sourceBadge = c.importSource 
+            ? `<span class="conflict-source" style="background: rgba(6, 182, 212, 0.1); color: var(--info); padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px;">${getImportSourceLabel(c.importSource)}</span>`
+            : '';
+        
+        return `
+            <div class="conflict-item" onclick="openConflictModal('${c.id}')">
+                <div class="conflict-header">
+                    <div class="conflict-title">${dist ? `${dist.residentName} - ${dist.supplyName}` : '未知记录'}${sourceBadge}</div>
+                    <span class="conflict-type">${typeLabel}</span>
+                </div>
+                <div class="conflict-desc">${getConflictDescription(c)}</div>
+                <div class="conflict-meta">
+                    <span>创建时间: ${formatDate(c.timestamp)}</span>
+                    <span>点击复核 →</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
 window.openSupplyModal = openSupplyModal;
 window.closeSupplyModal = closeSupplyModal;
 window.saveSupply = saveSupply;
 window.editSupply = editSupply;
 window.deleteSupply = deleteSupply;
+window.handleFileSelect = handleFileSelect;
+window.confirmImport = confirmImport;
+window.cancelImport = cancelImport;
+window.downloadImportTemplate = downloadImportTemplate;
+window.openUndoModal = openUndoModal;
+window.closeUndoModal = closeUndoModal;
+window.executeUndo = executeUndo;
+window.getConflictTypeLabel = getConflictTypeLabel;
+window.getImportSourceLabel = getImportSourceLabel;

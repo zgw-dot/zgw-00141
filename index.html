@@ -141,6 +141,46 @@
                         确认领取
                     </button>
 
+                    <div class="divider-section">
+                        <div class="divider-line"></div>
+                        <div class="divider-text">离线补录</div>
+                        <div class="divider-line"></div>
+                    </div>
+
+                    <div class="import-section">
+                        <div class="section-title" style="margin-top: 0;">批量导入</div>
+                        <div class="format-options">
+                            <label class="format-option">
+                                <input type="radio" name="import-format" value="csv" checked>
+                                <span>CSV 文件</span>
+                            </label>
+                            <label class="format-option">
+                                <input type="radio" name="import-format" value="json">
+                                <span>JSON 文件</span>
+                            </label>
+                        </div>
+                        <input type="file" id="import-file" class="file-input" accept=".csv,.json" style="display: none;">
+                        <button class="submit-btn secondary" onclick="document.getElementById('import-file').click()">
+                            📁 选择文件导入
+                        </button>
+                        <button class="submit-btn secondary" onclick="downloadImportTemplate()">
+                            📋 下载导入模板
+                        </button>
+                        <div class="import-preview" id="import-preview" style="display: none;">
+                            <div class="section-title">导入预览</div>
+                            <div id="import-preview-content"></div>
+                            <div class="import-actions">
+                                <button class="submit-btn" onclick="confirmImport()" id="confirm-import-btn" disabled>
+                                    确认导入 <span id="import-count-badge">0</span> 条
+                                </button>
+                                <button class="submit-btn secondary" onclick="cancelImport()">
+                                    取消
+                                </button>
+                            </div>
+                        </div>
+                        <div class="import-results" id="import-results" style="display: none;"></div>
+                    </div>
+
                     <div class="error-message" id="distribute-error" style="display: none;"></div>
                 </div>
             </section>
@@ -159,6 +199,12 @@
                         <div class="conflict-stat-value" id="rejected-conflicts">0</div>
                         <div class="conflict-stat-label">已驳回</div>
                     </div>
+                </div>
+
+                <div class="conflict-actions-bar">
+                    <button class="btn-secondary-small" onclick="openUndoModal()" id="undo-btn" disabled>
+                        ↩️ 撤销上次处理
+                    </button>
                 </div>
 
                 <div class="section-title">待处理冲突</div>
@@ -189,6 +235,24 @@
                 <div class="export-container">
                     <div class="section-title">导出审计记录</div>
                     
+                    <div class="form-group">
+                        <label class="form-label">导出内容</label>
+                        <div class="format-options">
+                            <label class="format-option">
+                                <input type="radio" name="export-type" value="distributions" checked onchange="updateExportStats()">
+                                <span>领取记录</span>
+                            </label>
+                            <label class="format-option">
+                                <input type="radio" name="export-type" value="audit" onchange="updateExportStats()">
+                                <span>审计日志</span>
+                            </label>
+                            <label class="format-option">
+                                <input type="radio" name="export-type" value="both" onchange="updateExportStats()">
+                                <span>全部导出</span>
+                            </label>
+                        </div>
+                    </div>
+
                     <div class="form-group">
                         <label class="form-label">时间范围</label>
                         <div class="date-range">
@@ -282,6 +346,26 @@
             <div class="modal-footer">
                 <button class="modal-btn reject" onclick="resolveConflict('reject')">驳回本地</button>
                 <button class="modal-btn approve" onclick="resolveConflict('approve')">批准本地</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal" id="undo-modal" style="display: none;">
+        <div class="modal-overlay" onclick="closeUndoModal()"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>撤销操作</h3>
+                <button class="modal-close" onclick="closeUndoModal()">✕</button>
+            </div>
+            <div class="modal-body" id="undo-modal-body">
+                <div class="conflict-detail-section">
+                    <div class="conflict-detail-title">最近处理的冲突</div>
+                    <div id="last-resolution-info">暂无最近处理记录</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-btn reject" onclick="closeUndoModal()">取消</button>
+                <button class="modal-btn approve" onclick="executeUndo()" id="undo-action-btn" disabled>撤销本次操作</button>
             </div>
         </div>
     </div>
