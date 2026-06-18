@@ -1,0 +1,18 @@
+{
+  "ticketId": "handoff_1781774630804_6761",
+  "batchId": "batch_1781774630804_566",
+  "fileName": "物资批次_TEST_2024.xlsx",
+  "entryPage": "dashboard",
+  "createdBy": "user_admin_001",
+  "createdByName": "测试管理员",
+  "status": "open",
+  "createdAt": 1781774630804,
+  "expiresAt": 1781861030804,
+  "activityLog": [
+    {
+      "action": "created",
+      "timestamp": 1781774630804
+    }
+  ],
+  "_savedAt": "2026-06-18T17:23:50.807908"
+}

@@ -1,0 +1,18 @@
+{
+  "exportId": "export_1781774630826_515",
+  "batchId": "batch_1781774630826_46",
+  "batchName": "导出清单测试批次",
+  "fileName": "批次详情_TEST_2025.csv",
+  "format": "csv",
+  "recordCount": 128,
+  "fileSize": 15234,
+  "exportedBy": "user_admin_001",
+  "exportedByName": "测试管理员",
+  "exportedAt": 1781774630826,
+  "signature": {
+    "signedAt": 1781774630826,
+    "signedBy": "user_admin_001",
+    "passwordVerified": true
+  },
+  "_savedAt": "2026-06-18T17:23:50.831160"
+}

@@ -1,4 +1,4 @@
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const DB_NAME = 'shelter_supply_db';
 
 const STORES = {
@@ -12,7 +12,9 @@ const STORES = {
     BATCHES: 'batches',
     SESSION_CARDS: 'session_cards',
     PERMISSION_DENIALS: 'permission_denials',
-    EXPORT_RECORDS: 'export_records'
+    EXPORT_RECORDS: 'export_records',
+    HANDOFF_CONFIGS: 'handoff_configs',
+    HANDOFF_TICKETS: 'handoff_tickets'
 };
 
 const BATCH_STATUS = {
@@ -158,6 +160,48 @@ class Database {
                     if (!exportStore.indexNames.contains('batchId')) {
                         exportStore.createIndex('batchId', 'batchId', { unique: false });
                     }
+                }
+
+                if (!db.objectStoreNames.contains(STORES.HANDOFF_CONFIGS)) {
+                    const configStore = db.createObjectStore(STORES.HANDOFF_CONFIGS, { keyPath: 'id' });
+                    configStore.createIndex('updatedAt', 'updatedAt', { unique: false });
+                }
+
+                if (!db.objectStoreNames.contains(STORES.HANDOFF_TICKETS)) {
+                    const ticketStore = db.createObjectStore(STORES.HANDOFF_TICKETS, { keyPath: 'id' });
+                    ticketStore.createIndex('batchId', 'batchId', { unique: false });
+                    ticketStore.createIndex('sessionCardId', 'sessionCardId', { unique: false });
+                    ticketStore.createIndex('createdBy', 'createdBy', { unique: false });
+                    ticketStore.createIndex('assignedTo', 'assignedTo', { unique: false });
+                    ticketStore.createIndex('status', 'status', { unique: false });
+                    ticketStore.createIndex('createdAt', 'createdAt', { unique: false });
+                    ticketStore.createIndex('expiresAt', 'expiresAt', { unique: false });
+                }
+
+                if (oldVersion < 4) {
+                    try {
+                        const sessionStore = event.target.transaction.objectStore(STORES.SESSION_CARDS);
+                        const addFieldIfMissing = (store, fieldName) => {
+                            try {
+                                const cursorReq = store.openCursor();
+                                cursorReq.onsuccess = (e) => {
+                                    const cursor = e.target.result;
+                                    if (cursor) {
+                                        const data = cursor.value;
+                                        if (data[fieldName] === undefined) {
+                                            data[fieldName] = fieldName === 'pendingActions' ? [] : 
+                                                              fieldName === 'exportPreview' ? null :
+                                                              fieldName === 'batchSnapshot' ? null :
+                                                              fieldName === 'handoffTicketId' ? null : null;
+                                            cursor.update(data);
+                                        }
+                                        cursor.continue();
+                                    }
+                                };
+                            } catch (e) {}
+                        };
+                        ['pendingActions', 'exportPreview', 'batchSnapshot', 'handoffTicketId'].forEach(f => addFieldIfMissing(sessionStore, f));
+                    } catch (e) {}
                 }
             };
         });
@@ -522,6 +566,22 @@ class PermissionGate {
             reason: '角色权限不足'
         });
 
+        if (typeof fetch === 'function') {
+            try {
+                fetch('/api/permission_denials/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+                    body: JSON.stringify({
+                        filename: `denial_${denial.id.slice(-12)}.json`,
+                        content: denial,
+                        type: 'permission_denials',
+                        batchId,
+                        operator: { id: CURRENT_USER.id, name: CURRENT_USER.name, role: CURRENT_USER.role }
+                    })
+                }).catch(() => {});
+            } catch (_) {}
+        }
+
         return denial;
     }
 
@@ -542,8 +602,15 @@ class PermissionGate {
         return denials;
     }
 
-    async signOperation(action, batchId, details = {}) {
+    async signOperation(action, batchId, details = {}, password = null) {
         await this.requirePermission(action, batchId);
+
+        if (password !== null && password !== undefined) {
+            if (CURRENT_USER.role !== ROLES.ADMIN || !verifyAdminPassword(password)) {
+                await this.recordDenial(action, batchId);
+                throw new Error('管理员签名验证失败');
+            }
+        }
 
         const signature = {
             signedAt: Date.now(),
@@ -552,7 +619,8 @@ class PermissionGate {
             signedByRole: CURRENT_USER.role,
             action,
             batchId,
-            details
+            details,
+            passwordVerified: password !== null && password !== undefined
         };
 
         await addAuditLog('operation_signed', {
@@ -855,3 +923,445 @@ class ExportRecordEngine {
 }
 
 const exportRecordEngine = new ExportRecordEngine();
+
+const HANDOFF_TICKET_STATUS = {
+    DRAFT: 'draft',
+    OPEN: 'open',
+    IN_PROGRESS: 'in_progress',
+    COMPLETED: 'completed',
+    EXPIRED: 'expired',
+    CANCELLED: 'cancelled',
+    CONFLICT: 'conflict'
+};
+
+const DUPLICATE_IMPORT_STRATEGY = {
+    ASK: 'ask',
+    MERGE: 'merge',
+    REJECT: 'reject',
+    NEW_VERSION: 'new_version'
+};
+
+const EXPORT_NAMING_TEMPLATES = {
+    BATCH_DETAIL: '批次详情_{batchName}_{date}_{time}',
+    BATCH_LIST: '批次列表_{date}',
+    DISTRIBUTIONS: '领取记录_{date}',
+    AUDIT_LOG: '审计日志_{date}',
+    batch_csv: '批次详情_{batchShort}_{date}_{time}.csv',
+    batch_json: '批次详情_{batchShort}_{date}_{time}.json'
+};
+
+class HandoffConfigEngine {
+    constructor() {
+        this.defaultConfig = {
+            id: 'global',
+            ticketRetentionHours: 24,
+            duplicateImportStrategy: DUPLICATE_IMPORT_STRATEGY.ASK,
+            exportNamingTemplates: { ...EXPORT_NAMING_TEMPLATES },
+            requireAdminSignature: true,
+            autoCleanupExpired: true,
+            allowCrossUserHandoff: true,
+            updatedAt: Date.now()
+        };
+        this._cache = null;
+    }
+
+    async getConfig() {
+        if (this._cache && Date.now() - this._cache.updatedAt < 60000) {
+            return this._cache;
+        }
+        let config = await db.get(STORES.HANDOFF_CONFIGS, 'global');
+        if (!config) {
+            config = { ...this.defaultConfig };
+            await db.put(STORES.HANDOFF_CONFIGS, config);
+        }
+        if (!config.exportNamingTemplates) {
+            config.exportNamingTemplates = { ...EXPORT_NAMING_TEMPLATES };
+        }
+        this._cache = config;
+        return config;
+    }
+
+    async updateConfig(updates) {
+        const config = await this.getConfig();
+        Object.assign(config, updates, { updatedAt: Date.now() });
+        await db.put(STORES.HANDOFF_CONFIGS, config);
+        this._cache = config;
+        await addAuditLog('handoff_config_updated', { updates });
+        return config;
+    }
+
+    async getRetentionMs() {
+        const config = await this.getConfig();
+        return config.ticketRetentionHours * 60 * 60 * 1000;
+    }
+
+    async getDuplicateStrategy() {
+        const config = await this.getConfig();
+        return config.duplicateImportStrategy;
+    }
+
+    async saveConfig(newConfig) {
+        const existing = await this.getConfig();
+        const merged = {
+            ...existing,
+            ...newConfig,
+            id: 'global',
+            updatedAt: Date.now()
+        };
+        await db.put(STORES.HANDOFF_CONFIGS, merged);
+        this._cache = merged;
+        return merged;
+    }
+
+    async generateExportFilename(templateKey, context = {}) {
+        const config = await this.getConfig();
+        let template = config.exportNamingTemplates[templateKey] || templateKey;
+        const now = new Date();
+        const date = now.toISOString().slice(0, 10).replace(/-/g, '');
+        const time = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+        const replacements = {
+            date, time, ...context };
+        let filename = template;
+        for (const [key, val] of Object.entries(replacements)) {
+            filename = filename.replace(new RegExp(`\\{${key}\\}`, 'g'), String(val));
+        }
+        return filename;
+    }
+}
+
+const handoffConfig = new HandoffConfigEngine();
+
+class HandoffTicketEngine {
+    constructor() {
+        this.onTicketCreated = null;
+        this.onTicketAssigned = null;
+    }
+
+    async createTicketFromSession(sessionCardId, batch, assignedTo = null) {
+        const card = await db.get(STORES.SESSION_CARDS, sessionCardId);
+        if (!card) throw new Error('会话卡不存在');
+        const retentionMs = await handoffConfig.getRetentionMs();
+        const now = Date.now();
+        const ticket = {
+            id: generateId('handoff'),
+            sessionCardId,
+            batchId: batch.id,
+            batchSnapshot: {
+                id: batch.id, fileName: batch.fileName, status: batch.status,
+                totalRecords: batch.totalRecords, successCount: batch.successCount,
+                conflictCount: batch.conflictCount, revokedCount: batch.revokedCount || 0,
+                createdByName: batch.createdByName, timestamp: batch.timestamp,
+                fileHash: batch.fileHash || null, importVersion: batch.importVersion || 1
+            },
+            entryPage: card.sourceView,
+            filtersSnapshot: JSON.parse(JSON.stringify(card.filters || {})),
+            scrollPosition: card.scrollPosition || 0,
+            pendingActions: card.pendingActions || [],
+            exportPreview: card.exportPreview || null,
+            createdBy: CURRENT_USER.id, createdByName: CURRENT_USER.name,
+            createdByRole: CURRENT_USER.role,
+            assignedTo: assignedTo ? (assignedTo.id || null) : null,
+            assignedToName: assignedTo ? (assignedTo.name || null) : null,
+            status: HANDOFF_TICKET_STATUS.OPEN,
+            createdAt: now, updatedAt: now,
+            expiresAt: now + retentionMs,
+            activityLog: [{
+                action: 'created', userId: CURRENT_USER.id,
+                userName: CURRENT_USER.name,
+                timestamp: now,
+                detail: `从${this._getSourceLabel(card.sourceView)}进入，批次「${batch.fileName}」`
+            }]
+        };
+        await db.put(STORES.HANDOFF_TICKETS, ticket);
+        card.handoffTicketId = ticket.id;
+        await db.put(STORES.SESSION_CARDS, card);
+        await addAuditLog('handoff_ticket_created', {
+            ticketId: ticket.id, batchId: batch.id, sessionCardId });
+        if (this.onTicketCreated) this.onTicketCreated(ticket);
+        return ticket;
+    }
+
+    _getSourceLabel(view) {
+        const labels = { dashboard: '首页提醒', conflicts: '复核页', history: '记录页', batches: '导入中心', distribute: '签到页', export: '导出页' };
+        return labels[view] || view;
+    }
+
+    async getTicket(ticketId) {
+        return await db.get(STORES.HANDOFF_TICKETS, ticketId);
+    }
+
+    async getMyActiveTickets(userId = CURRENT_USER.id) {
+        const now = Date.now();
+        let tickets = await db.getAll(STORES.HANDOFF_TICKETS);
+        tickets = tickets.filter(t =>
+            (t.createdBy === userId || t.assignedTo === userId || t.assignedTo === null) &&
+            t.status !== HANDOFF_TICKET_STATUS.COMPLETED &&
+            t.status !== HANDOFF_TICKET_STATUS.EXPIRED &&
+            t.status !== HANDOFF_TICKET_STATUS.CANCELLED
+        );
+        tickets = tickets.map(t => this._checkAndMarkExpired(t, now));
+        tickets.sort((a, b) => b.createdAt - a.createdAt);
+        return tickets;
+    }
+
+    async getAllTickets(filters = {}) {
+        let tickets = await db.getAll(STORES.HANDOFF_TICKETS, 'createdAt');
+        const now = Date.now();
+        tickets = tickets.map(t => this._checkAndMarkExpired(t, now));
+        tickets.sort((a, b) => b.createdAt - a.createdAt);
+        if (filters.status) tickets = tickets.filter(t => t.status === filters.status);
+        if (filters.batchId) tickets = tickets.filter(t => t.batchId === filters.batchId);
+        if (filters.createdBy) tickets = tickets.filter(t => t.createdBy === filters.createdBy);
+        if (filters.assignedTo) tickets = tickets.filter(t => t.assignedTo === filters.assignedTo);
+        return tickets;
+    }
+
+    async _checkAndMarkExpired(ticket, now = Date.now()) {
+        if (ticket.status === HANDOFF_TICKET_STATUS.OPEN ||
+            ticket.status === HANDOFF_TICKET_STATUS.IN_PROGRESS) {
+            if (now > ticket.expiresAt) {
+                ticket.status = HANDOFF_TICKET_STATUS.EXPIRED;
+                if (!ticket.activityLog) ticket.activityLog = [];
+                ticket.activityLog.push({
+                    action: 'expired', userId: 'system', userName: '系统', timestamp: now, detail: '交接票已过期'
+                });
+                ticket.updatedAt = now;
+                await db.put(STORES.HANDOFF_TICKETS, ticket);
+                await addAuditLog('handoff_ticket_expired', { ticketId: ticket.id, batchId: ticket.batchId });
+            }
+        }
+        return ticket;
+    }
+
+    async claimTicket(ticketId) {
+        let ticket = await this.getTicket(ticketId);
+        if (!ticket) throw new Error('交接票不存在');
+        ticket = await this._checkAndMarkExpired(ticket);
+        if (ticket.status !== HANDOFF_TICKET_STATUS.OPEN &&
+            ticket.status !== HANDOFF_TICKET_STATUS.IN_PROGRESS) {
+            throw new Error(`交接票状态不可领取：${ticket.status}`);
+        }
+        const config = await handoffConfig.getConfig();
+        if (ticket.assignedTo && ticket.assignedTo !== CURRENT_USER.id && !config.allowCrossUserHandoff) {
+            throw new Error('此交接票已分配给其他人员');
+        }
+        const previousAssignee = ticket.assignedTo;
+        const previousAssigneeName = ticket.assignedToName;
+        ticket.assignedTo = CURRENT_USER.id;
+        ticket.assignedToName = CURRENT_USER.name;
+        ticket.status = HANDOFF_TICKET_STATUS.IN_PROGRESS;
+        ticket.claimedAt = Date.now();
+        ticket.updatedAt = Date.now();
+        ticket.activityLog.push({
+            action: 'claimed', userId: CURRENT_USER.id,
+            userName: CURRENT_USER.name, timestamp: Date.now(),
+            detail: previousAssignee ? `从${previousAssigneeName || previousAssignee}转交领取` : '从公开池领取'
+        });
+        await db.put(STORES.HANDOFF_TICKETS, ticket);
+        const card = await db.get(STORES.SESSION_CARDS, ticket.sessionCardId);
+        if (card) {
+            card.userId = CURRENT_USER.id;
+            card.userName = CURRENT_USER.name;
+            card.lastActivity = Date.now();
+            await db.put(STORES.SESSION_CARDS, card);
+        }
+        await addAuditLog('handoff_ticket_claimed', { ticketId, batchId: ticket.batchId, previousAssignee });
+        return { ticket, sessionCard: card };
+    }
+
+    async completeTicket(ticketId, resultDetail = '') {
+        const ticket = await this.getTicket(ticketId);
+        if (!ticket) throw new Error('交接票不存在');
+        ticket.status = HANDOFF_TICKET_STATUS.COMPLETED;
+        ticket.completedAt = Date.now();
+        ticket.completedBy = CURRENT_USER.id;
+        ticket.completedByName = CURRENT_USER.name;
+        ticket.updatedAt = Date.now();
+        ticket.activityLog.push({
+            action: 'completed', userId: CURRENT_USER.id, userName: CURRENT_USER.name,
+            timestamp: Date.now(), detail: resultDetail || '处理完成'
+        });
+        await db.put(STORES.HANDOFF_TICKETS, ticket);
+        const card = ticket.sessionCardId ?
+            await sessionCardEngine.completeCard(ticket.sessionCardId) : null;
+        await addAuditLog('handoff_ticket_completed', { ticketId, batchId: ticket.batchId });
+        return ticket;
+    }
+
+    async cancelTicket(ticketId, reason = '') {
+        const ticket = await this.getTicket(ticketId);
+        if (!ticket) throw new Error('交接票不存在');
+        ticket.status = HANDOFF_TICKET_STATUS.CANCELLED;
+        ticket.cancelledAt = Date.now();
+        ticket.cancelledBy = CURRENT_USER.id;
+        ticket.cancelledByName = CURRENT_USER.name;
+        ticket.cancelledReason = reason;
+        ticket.updatedAt = Date.now();
+        ticket.activityLog.push({
+            action: 'cancelled', userId: CURRENT_USER.id, userName: CURRENT_USER.name,
+            timestamp: Date.now(), detail: reason || '已取消'
+        });
+        await db.put(STORES.HANDOFF_TICKETS, ticket);
+        if (ticket.sessionCardId) {
+            await sessionCardEngine.cancelCard(ticket.sessionCardId);
+        }
+        await addAuditLog('handoff_ticket_cancelled', { ticketId, batchId: ticket.batchId, reason });
+        return ticket;
+    }
+
+    async markConflict(ticketId, conflictDetail) {
+        const ticket = await this.getTicket(ticketId);
+        if (!ticket) throw new Error('交接票不存在');
+        ticket.status = HANDOFF_TICKET_STATUS.CONFLICT;
+        ticket.updatedAt = Date.now();
+        ticket.conflictDetail = conflictDetail;
+        ticket.activityLog.push({
+            action: 'conflict', userId: CURRENT_USER.id, userName: CURRENT_USER.name,
+            timestamp: Date.now(), detail: conflictDetail
+        });
+        await db.put(STORES.HANDOFF_TICKETS, ticket);
+        await addAuditLog('handoff_ticket_conflict', { ticketId, batchId: ticket.batchId, conflictDetail });
+        return ticket;
+    }
+
+    async updatePendingActions(ticketId, actions) {
+        const ticket = await this.getTicket(ticketId);
+        if (!ticket) throw new Error('交接票不存在');
+        ticket.pendingActions = actions;
+        ticket.updatedAt = Date.now();
+        await db.put(STORES.HANDOFF_TICKETS, ticket);
+        if (ticket.sessionCardId) {
+            const card = await db.get(STORES.SESSION_CARDS, ticket.sessionCardId);
+            if (card) {
+                card.pendingActions = actions;
+                await db.put(STORES.SESSION_CARDS, card);
+            }
+        }
+        return ticket;
+    }
+
+    async updateExportPreview(ticketId, previewData) {
+        const ticket = await this.getTicket(ticketId);
+        if (!ticket) throw new Error('交接票不存在');
+        ticket.exportPreview = previewData;
+        ticket.updatedAt = Date.now();
+        await db.put(STORES.HANDOFF_TICKETS, ticket);
+        if (ticket.sessionCardId) {
+            const card = await db.get(STORES.SESSION_CARDS, ticket.sessionCardId);
+            if (card) {
+                card.exportPreview = previewData;
+                await db.put(STORES.SESSION_CARDS, card);
+            }
+        }
+        return ticket;
+    }
+
+    async cleanupExpired() {
+        const config = await handoffConfig.getConfig();
+        if (!config.autoCleanupExpired) return 0;
+        const tickets = await db.getAll(STORES.HANDOFF_TICKETS);
+        const now = Date.now();
+        let cleaned = 0;
+        const retentionMs = await handoffConfig.getRetentionMs();
+        for (const t of tickets) {
+            const shouldDelete = (t.status === HANDOFF_TICKET_STATUS.COMPLETED ||
+                t.status === HANDOFF_TICKET_STATUS.CANCELLED ||
+                t.status === HANDOFF_TICKET_STATUS.EXPIRED) &&
+                (now - t.updatedAt) > retentionMs * 7;
+            if (shouldDelete) {
+                await db.delete(STORES.HANDOFF_TICKETS, t.id);
+                cleaned++;
+            } else if (t.status === HANDOFF_TICKET_STATUS.OPEN ||
+                       t.status === HANDOFF_TICKET_STATUS.IN_PROGRESS) {
+                this._checkAndMarkExpired(t, now);
+            }
+        }
+        return cleaned;
+    }
+
+    async persistTicketToDisk(ticketId) {
+        try {
+            const ticket = await this.getTicket(ticketId);
+            if (!ticket) throw new Error('交接票不存在');
+            const payload = {
+                filename: `handoff_${ticket.id.slice(-12)}.json`,
+                content: JSON.stringify(ticket, null, 2),
+                type: 'handoff_tickets',
+                batchId: ticket.batchId,
+                operator: { id: CURRENT_USER.id, name: CURRENT_USER.name, role: CURRENT_USER.role }
+            };
+            const resp = await fetch('/api/handoff/persist', {
+                method: 'POST', headers: { 'Content-Type': 'application/json; charset=utf-8' },
+                body: JSON.stringify(payload)
+            });
+            return await resp.json();
+        } catch (e) {
+            return null;
+        }
+    }
+}
+
+const handoffTicketEngine = new HandoffTicketEngine();
+
+SessionCardEngine.prototype.updateCardWithSnapshot = async function(cardId, updates = {}) {
+    const card = await db.get(STORES.SESSION_CARDS, cardId);
+    if (!card) return null;
+    const now = Date.now();
+    if (updates.pendingActions !== undefined) {
+        card.pendingActions = updates.pendingActions;
+    }
+    if (updates.exportPreview !== undefined) {
+        card.exportPreview = updates.exportPreview;
+    }
+    if (updates.batchSnapshot !== undefined) {
+        card.batchSnapshot = updates.batchSnapshot;
+    }
+    card.updatedAt = now;
+    card.lastActivity = now;
+    await db.put(STORES.SESSION_CARDS, card);
+    this.activeCard = card;
+    if (card.handoffTicketId) {
+        const ticketUpdates = {};
+        if (updates.pendingActions !== undefined) ticketUpdates.pendingActions = updates.pendingActions;
+        if (updates.exportPreview !== undefined) ticketUpdates.exportPreview = updates.exportPreview;
+        if (Object.keys(ticketUpdates).length > 0) {
+            try {
+                const ticket = await db.get(STORES.HANDOFF_TICKETS, card.handoffTicketId);
+                if (ticket) {
+                    Object.assign(ticket, ticketUpdates, { updatedAt: now });
+                    await db.put(STORES.HANDOFF_TICKETS, ticket);
+                }
+            } catch (e) {}
+        }
+    }
+    return card;
+};
+
+SessionCardEngine.prototype.capturePendingActions = async function(cardId, batch) {
+    const pending = [];
+    const pendingConflicts = await batchEngine.getBatchPendingConflicts(batch.id);
+    if (pendingConflicts.length > 0) {
+        pending.push({ type: 'review_conflicts', label: `复核${pendingConflicts.length}条冲突`, count: pendingConflicts.length });
+    }
+    const failed = batch.failedRecords || [];
+    if (failed.length > 0) {
+        pending.push({ type: 'retry_failed', label: `重试${failed.length}条失败项`, count: failed.length });
+    }
+    const dists = await batchEngine.getBatchDistributions(batch.id);
+    const pendingSync = dists.filter(d => d.status === DISTRIBUTION_STATUS.PENDING).length;
+    if (pendingSync > 0) {
+        pending.push({ type: 'wait_sync', label: `等待${pendingSync}条同步`, count: pendingSync });
+    }
+    if (batch.status !== BATCH_STATUS.COMPLETED) {
+        pending.push({ type: 'export', label: '导出批次详情', count: 1 });
+    }
+    await this.updateCardWithSnapshot(cardId, {
+        pendingActions: pending,
+        batchSnapshot: {
+            id: batch.id, fileName: batch.fileName, status: batch.status,
+            totalRecords: batch.totalRecords, successCount: batch.successCount,
+            conflictCount: batch.conflictCount, revokedCount: batch.revokedCount || 0
+        }
+    });
+    return pending;
+};

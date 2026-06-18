@@ -1,0 +1,44 @@
+{
+  "id": "handoff_1781774017067_f3e2kb3xy",
+  "sessionCardId": "session_1781774017066_0iahrangc",
+  "batchId": "batch_1781774017066_wgyq4ob5s",
+  "batchSnapshot": {
+    "id": "batch_1781774017066_wgyq4ob5s",
+    "fileName": "__E2E__批次A物资.xlsx",
+    "status": "partial",
+    "totalRecords": 10,
+    "successCount": 6,
+    "conflictCount": 3,
+    "revokedCount": 0,
+    "createdByName": "E2E管理员",
+    "timestamp": 1781774017066,
+    "fileHash": "E2E_SHA256_BATCH_A_1781774017066",
+    "importVersion": 1
+  },
+  "entryPage": "dashboard",
+  "filtersSnapshot": {
+    "status": "all",
+    "keyword": "物资"
+  },
+  "scrollPosition": 1234,
+  "pendingActions": [],
+  "exportPreview": null,
+  "createdBy": "e2e_admin",
+  "createdByName": "E2E管理员",
+  "createdByRole": "admin",
+  "assignedTo": null,
+  "assignedToName": null,
+  "status": "open",
+  "createdAt": 1781774017067,
+  "updatedAt": 1781774017067,
+  "expiresAt": 1781860417067,
+  "activityLog": [
+    {
+      "action": "created",
+      "userId": "e2e_admin",
+      "userName": "E2E管理员",
+      "timestamp": 1781774017067,
+      "detail": "从首页提醒进入，批次「__E2E__批次A物资.xlsx」"
+    }
+  ]
+}

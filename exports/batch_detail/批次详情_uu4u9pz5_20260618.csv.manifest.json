@@ -1,0 +1,20 @@
+{
+  "filename": "批次详情_uu4u9pz5_20260618.csv",
+  "fileName": "批次详情_uu4u9pz5_20260618.csv",
+  "exportType": "batch_detail",
+  "format": "batch_detail",
+  "batchId": "batch_1781774990887_xuu4u9pz5",
+  "operator": {
+    "id": "user_1",
+    "name": "管理员老李",
+    "role": "admin"
+  },
+  "signature": {},
+  "recordCount": 0,
+  "timestamp": "2026-06-18T17:29:54.507952",
+  "sizeBytes": 672,
+  "fileSize": 672,
+  "filepath": "exports\\batch_detail\\批次详情_uu4u9pz5_20260618.csv",
+  "filePath": "exports\\batch_detail\\批次详情_uu4u9pz5_20260618.csv",
+  "absolutePath": "D:\\workSpace\\AI__SPACE\\02-label\\zgw-00141\\exports\\batch_detail\\批次详情_uu4u9pz5_20260618.csv"
+}

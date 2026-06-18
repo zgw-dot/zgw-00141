@@ -1,0 +1,24 @@
+{
+  "filename": "SC5_CHECK.csv",
+  "fileName": "SC5_CHECK.csv",
+  "storeType": "export_manifests",
+  "type": "export_manifests",
+  "label": "导出清单",
+  "batchId": "batch_1781774248130_wogxiq91e",
+  "ticketId": null,
+  "denialId": "denial_20260618_171729_415",
+  "exportId": "export_1781774249106_c1a0jzflv",
+  "action": "导出清单",
+  "reason": "",
+  "operator": {
+    "id": "e2e_admin",
+    "name": "E2E管理员",
+    "role": "unknown"
+  },
+  "timestamp": "2026-06-18T17:17:29.416096",
+  "sizeBytes": 356,
+  "fileSize": 356,
+  "filepath": "exports\\export_manifests\\SC5_CHECK.csv",
+  "filePath": "exports\\export_manifests\\SC5_CHECK.csv",
+  "absolutePath": "D:\\workSpace\\AI__SPACE\\02-label\\zgw-00141\\exports\\export_manifests\\SC5_CHECK.csv"
+}

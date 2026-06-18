@@ -1,0 +1,79 @@
+{
+  "passed": 12,
+  "total": 12,
+  "results": [
+    {
+      "name": "服务响应正常",
+      "passed": true,
+      "detail": "status=200",
+      "ts": "2026-06-18T09:23:50.804Z"
+    },
+    {
+      "name": "POST /api/handoff/persist 状态码200",
+      "passed": true,
+      "detail": "status=200",
+      "ts": "2026-06-18T09:23:50.810Z"
+    },
+    {
+      "name": "返回 success=true",
+      "passed": true,
+      "detail": "body={\"success\":true,\"filepath\":\"D:\\\\workSpace\\\\AI__SPACE\\\\02-label\\\\zgw-00141\\\\exports\\\\handoff_tickets\\\\物资批次_TEST_2024.xlsx",
+      "ts": "2026-06-18T09:23:50.811Z"
+    },
+    {
+      "name": "文件实际写入磁盘",
+      "passed": true,
+      "detail": "path=exports\\handoff_tickets\\物资批次_TEST_2024.xlsx.json",
+      "ts": "2026-06-18T09:23:50.811Z"
+    },
+    {
+      "name": "POST /api/failed_records/save 状态码200",
+      "passed": true,
+      "detail": "status=200",
+      "ts": "2026-06-18T09:23:50.817Z"
+    },
+    {
+      "name": "返回 filePath 存在",
+      "passed": true,
+      "detail": "path=exports\\failed_records\\失败批次_F001.csv",
+      "ts": "2026-06-18T09:23:50.817Z"
+    },
+    {
+      "name": "POST /api/permission_denials/save 状态码200",
+      "passed": true,
+      "detail": "status=200",
+      "ts": "2026-06-18T09:23:50.826Z"
+    },
+    {
+      "name": "返回包含 denialId",
+      "passed": "denial_20260618_172350_820",
+      "detail": "denialId=denial_20260618_172350_820",
+      "ts": "2026-06-18T09:23:50.826Z"
+    },
+    {
+      "name": "POST /api/export_manifest/save 状态码200",
+      "passed": true,
+      "detail": "status=200",
+      "ts": "2026-06-18T09:23:50.833Z"
+    },
+    {
+      "name": "返回包含 manifestFilePath",
+      "passed": true,
+      "detail": "path=exports\\export_manifests\\批次详情_TEST_2025.csv.manifest.json",
+      "ts": "2026-06-18T09:23:50.834Z"
+    },
+    {
+      "name": "POST /api/export 状态码200",
+      "passed": true,
+      "detail": "status=200",
+      "ts": "2026-06-18T09:23:50.838Z"
+    },
+    {
+      "name": "返回包含 downloadUrl",
+      "passed": true,
+      "detail": "url=/exports/csv/批次详情_EXPORT_DEMO_20250101.csv",
+      "ts": "2026-06-18T09:23:50.838Z"
+    }
+  ],
+  "timestamp": 1781774630838
+}

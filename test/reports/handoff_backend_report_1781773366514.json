@@ -1,0 +1,77 @@
+{
+  "passed": 7,
+  "total": 12,
+  "results": [
+    {
+      "name": "服务响应正常",
+      "passed": true,
+      "detail": "status=200",
+      "ts": "2026-06-18T09:02:46.481Z"
+    },
+    {
+      "name": "POST /api/handoff/persist 状态码200",
+      "passed": true,
+      "detail": "status=200",
+      "ts": "2026-06-18T09:02:46.488Z"
+    },
+    {
+      "name": "返回 success=true",
+      "passed": true,
+      "detail": "body={\"success\":true,\"filepath\":\"D:\\\\workSpace\\\\AI__SPACE\\\\02-label\\\\zgw-00141\\\\exports\\\\handoff_tickets\\\\handoff_tickets_202",
+      "ts": "2026-06-18T09:02:46.488Z"
+    },
+    {
+      "name": "文件实际写入磁盘",
+      "detail": "path=undefined",
+      "ts": "2026-06-18T09:02:46.488Z"
+    },
+    {
+      "name": "POST /api/failed_records/save 状态码200",
+      "passed": true,
+      "detail": "status=200",
+      "ts": "2026-06-18T09:02:46.494Z"
+    },
+    {
+      "name": "返回 filePath 存在",
+      "passed": false,
+      "detail": "path=N/A",
+      "ts": "2026-06-18T09:02:46.494Z"
+    },
+    {
+      "name": "POST /api/permission_denials/save 状态码200",
+      "passed": true,
+      "detail": "status=200",
+      "ts": "2026-06-18T09:02:46.502Z"
+    },
+    {
+      "name": "返回包含 denialId",
+      "detail": "denialId=N/A",
+      "ts": "2026-06-18T09:02:46.502Z"
+    },
+    {
+      "name": "POST /api/export_manifest/save 状态码200",
+      "passed": true,
+      "detail": "status=200",
+      "ts": "2026-06-18T09:02:46.508Z"
+    },
+    {
+      "name": "返回包含 manifestFilePath",
+      "passed": false,
+      "detail": "path=N/A",
+      "ts": "2026-06-18T09:02:46.508Z"
+    },
+    {
+      "name": "POST /api/export 状态码200",
+      "passed": true,
+      "detail": "status=200",
+      "ts": "2026-06-18T09:02:46.512Z"
+    },
+    {
+      "name": "返回包含 downloadUrl",
+      "passed": false,
+      "detail": "url=N/A",
+      "ts": "2026-06-18T09:02:46.512Z"
+    }
+  ],
+  "timestamp": 1781773366514
+}

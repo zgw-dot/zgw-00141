@@ -1,0 +1,10 @@
+{
+  "filename": "failed_records_20260618_170246_493.json",
+  "storeType": "failed_records",
+  "label": "失败明细",
+  "batchId": "batch_1781773366489_7437",
+  "operator": {},
+  "timestamp": "2026-06-18T17:02:46.493862",
+  "sizeBytes": 0,
+  "filepath": "exports\\failed_records\\failed_records_20260618_170246_493.json"
+}

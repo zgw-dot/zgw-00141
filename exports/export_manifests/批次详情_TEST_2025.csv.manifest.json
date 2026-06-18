@@ -1,0 +1,24 @@
+{
+  "filename": "批次详情_TEST_2025.csv",
+  "fileName": "批次详情_TEST_2025.csv",
+  "storeType": "export_manifests",
+  "type": "export_manifests",
+  "label": "导出清单",
+  "batchId": "batch_1781774630826_46",
+  "ticketId": null,
+  "denialId": "denial_20260618_172350_830",
+  "exportId": "export_1781774630826_515",
+  "action": "导出清单",
+  "reason": "",
+  "operator": {
+    "id": "user_admin_001",
+    "name": "测试管理员",
+    "role": "unknown"
+  },
+  "timestamp": "2026-06-18T17:23:50.831740",
+  "sizeBytes": 462,
+  "fileSize": 462,
+  "filepath": "exports\\export_manifests\\批次详情_TEST_2025.csv",
+  "filePath": "exports\\export_manifests\\批次详情_TEST_2025.csv",
+  "absolutePath": "D:\\workSpace\\AI__SPACE\\02-label\\zgw-00141\\exports\\export_manifests\\批次详情_TEST_2025.csv"
+}

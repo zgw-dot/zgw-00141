@@ -1,0 +1,19 @@
+{
+  "batchId": "batch_1781774990887_xuu4u9pz5",
+  "filename": "批次详情_uu4u9pz5_20260618.csv",
+  "format": "csv",
+  "recordCount": 2,
+  "exportedBy": {
+    "id": "user_1",
+    "name": "管理员老李",
+    "role": "admin"
+  },
+  "exportedAt": 1781774994520,
+  "batchSnapshot": {
+    "fileName": "zgw00141_review_input_export.csv",
+    "totalRecords": 2,
+    "successCount": 1,
+    "conflictCount": 1,
+    "failedCount": 1
+  }
+}

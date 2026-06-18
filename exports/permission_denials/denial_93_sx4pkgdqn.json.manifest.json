@@ -1,0 +1,24 @@
+{
+  "filename": "denial_93_sx4pkgdqn.json",
+  "fileName": "denial_93_sx4pkgdqn.json",
+  "storeType": "permission_denials",
+  "type": "permission_denials",
+  "label": "权限拒绝记录",
+  "batchId": "__config__",
+  "ticketId": null,
+  "denialId": "denial_20260618_172914_509",
+  "exportId": null,
+  "action": "权限拒绝记录",
+  "reason": "",
+  "operator": {
+    "id": "user_1",
+    "name": "管理员老李",
+    "role": "admin"
+  },
+  "timestamp": "2026-06-18T17:29:14.510523",
+  "sizeBytes": 331,
+  "fileSize": 331,
+  "filepath": "exports\\permission_denials\\denial_93_sx4pkgdqn.json",
+  "filePath": "exports\\permission_denials\\denial_93_sx4pkgdqn.json",
+  "absolutePath": "D:\\workSpace\\AI__SPACE\\02-label\\zgw-00141\\exports\\permission_denials\\denial_93_sx4pkgdqn.json"
+}

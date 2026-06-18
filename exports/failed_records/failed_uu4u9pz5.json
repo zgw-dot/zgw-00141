@@ -1,0 +1,13 @@
+[
+  {
+    "index": 2,
+    "type": "invalid_resident",
+    "message": "居民不存在: 不存在的人 (110101199999999999)",
+    "data": {
+      "residentName": "不存在的人",
+      "idCard": "110101199999999999",
+      "supplyName": "瓶装饮用水",
+      "quantity": 1
+    }
+  }
+]

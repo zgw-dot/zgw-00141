@@ -39,7 +39,8 @@ function navigateTo(viewName) {
         batches: '导入中心',
         history: '领取记录',
         export: '审计导出',
-        supplies: '物资配置'
+        supplies: '物资配置',
+        handoff: '批次交接箱'
     };
     
     const titleEl = document.getElementById('page-title');
@@ -61,6 +62,8 @@ function navigateTo(viewName) {
         refreshExportView();
     } else if (viewName === 'supplies') {
         refreshSuppliesView();
+    } else if (viewName === 'handoff') {
+        refreshHandoffView();
     }
 }
 
@@ -962,6 +965,7 @@ async function refreshAllViews() {
     if (currentView === 'history') await refreshHistoryView();
     if (currentView === 'export') await refreshExportView();
     if (currentView === 'supplies') await refreshSuppliesView();
+    if (currentView === 'handoff') await refreshHandoffView();
 }
 
 function openUserSwitchModal() {
@@ -1058,10 +1062,53 @@ async function handleFileSelect(e) {
         const existingBatch = await batchEngine.checkDuplicateImport(fileHash);
 
         if (existingBatch) {
-            const confirmDup = confirm(`检测到重复导入：\n\n文件 "${file.name}" 已于 ${formatDate(existingBatch.timestamp)} 由 ${existingBatch.createdByName} 导入\n成功 ${existingBatch.successCount} 条，冲突 ${existingBatch.conflictCount} 条\n\n是否仍然继续导入？`);
-            if (!confirmDup) {
+            let strategy = DUPLICATE_IMPORT_STRATEGY.ASK;
+            if (typeof handoffConfigEngine !== 'undefined') {
+                try {
+                    const cfg = await handoffConfigEngine.getConfig();
+                    strategy = cfg.duplicateImportStrategy || strategy;
+                } catch (_) {}
+            }
+
+            if (strategy === DUPLICATE_IMPORT_STRATEGY.REJECT) {
+                showToast(`拒绝重复导入：该文件已于 ${formatDate(existingBatch.timestamp)} 导入`);
+                if (typeof addAuditLog === 'function') {
+                    await addAuditLog('duplicate_import_rejected', { existingBatchId: existingBatch.id, fileName: file.name, fileHash });
+                }
+                if (typeof handoffTicketEngine !== 'undefined') {
+                    try {
+                        const openTickets = await handoffTicketEngine.getAllTickets({ batchId: existingBatch.id });
+                        if (openTickets && openTickets.length > 0) {
+                            await handoffTicketEngine.markConflict(openTickets[0].id, {
+                                reason: 'duplicate_import_rejected',
+                                existingBatchId: existingBatch.id,
+                                fileName: file.name
+                            });
+                        }
+                    } catch (_) {}
+                }
                 e.target.value = '';
                 return;
+            }
+
+            if (strategy === DUPLICATE_IMPORT_STRATEGY.MERGE) {
+                showToast('将合并到现有批次（同 hash 跳过创建）');
+                currentBatchId = existingBatch.id;
+                if (typeof addAuditLog === 'function') {
+                    await addAuditLog('duplicate_import_merged', { existingBatchId: existingBatch.id, fileName: file.name, fileHash });
+                }
+            } else if (strategy === DUPLICATE_IMPORT_STRATEGY.NEW_VERSION) {
+                showToast('将以新版本方式导入');
+                currentBatchId = null;
+            } else {
+                const confirmDup = confirm(
+`检测到重复导入（策略：询问）：\n\n文件 "${file.name}" 已于 ${formatDate(existingBatch.timestamp)} 由 ${existingBatch.createdByName} 导入\n成功 ${existingBatch.successCount} 条，冲突 ${existingBatch.conflictCount} 条\n\n[是] 新建版本继续导入\n[否] 跳转到已有批次`
+                );
+                if (!confirmDup) {
+                    e.target.value = '';
+                    navigateToBatch(existingBatch.id);
+                    return;
+                }
             }
         }
 
@@ -1631,6 +1678,21 @@ async function navigateToBatch(batchId) {
         scrollPosition
     );
 
+    if (typeof handoffTicketEngine !== 'undefined') {
+        try {
+            const batchForHandoff = await batchEngine.getBatch(batchId);
+            if (batchForHandoff) {
+                await handoffTicketEngine.createTicketFromSession(sessionCard.id, batchForHandoff);
+                await handoffTicketEngine.cleanupExpired();
+                if (typeof sessionCardEngine !== 'undefined' && typeof sessionCardEngine.capturePendingActions === 'function') {
+                    await sessionCardEngine.capturePendingActions(sessionCard.id, batchForHandoff);
+                }
+            }
+        } catch (e) {
+            console.warn('创建交接票失败（不阻塞详情打开）:', e);
+        }
+    }
+
     selectedBatchIdForDetail = batchId;
     
     const batch = await batchEngine.getBatch(batchId);
@@ -1841,6 +1903,9 @@ async function openBatchDetailModal(batchId, sessionCardId = null) {
     
     let sessionCardHtml = '';
     let sourceViewLabel = '';
+    let handoffTicketHtml = '';
+    let pendingActionsHtml = '';
+    let exportPreviewHtml = '';
     if (currentSessionCardId) {
         const card = await sessionCardEngine.getCard(currentSessionCardId);
         if (card) {
@@ -1886,11 +1951,69 @@ async function openBatchDetailModal(batchId, sessionCardId = null) {
                 </div>
             </div>
             `;
+
+            if (card.handoffTicketId && typeof handoffTicketEngine !== 'undefined') {
+                const tkt = await handoffTicketEngine.getTicket(card.handoffTicketId);
+                if (tkt) {
+                    const statusBadge = _formatHandoffStatus(tkt.status);
+                    const assignName = tkt.assignedToName || (tkt.assignedTo ? tkt.assignedTo.slice(-6) : '公开池');
+                    const expiresLabel = tkt.expiresAt ? new Date(tkt.expiresAt).toLocaleString('zh-CN') : '-';
+                    handoffTicketHtml = `
+                    <div class="conflict-detail-section" style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.05), rgba(245, 158, 11, 0.05); border: 1px solid rgba(16, 185, 129, 0.2); border-radius: 8px;">
+                        <div class="conflict-detail-title" style="color: var(--success);">🧾 交接票</div>
+                        <div class="data-row"><span class="data-row-label">票号</span><span class="data-row-value" style="font-family:monospace;font-size:12px;">${tkt.id.slice(-12)}</span></div>
+                        <div class="data-row"><span class="data-row-label">状态</span><span class="data-row-value">${statusBadge}</span></div>
+                        <div class="data-row"><span class="data-row-label">发起人</span><span class="data-row-value">${tkt.createdByName || tkt.createdBy.slice(-6)}</span></div>
+                        <div class="data-row"><span class="data-row-label">当前领取人</span><span class="data-row-value">${assignName}</span></div>
+                        <div class="data-row"><span class="data-row-label">过期时间</span><span class="data-row-value">${expiresLabel}</span></div>
+                        <div style="margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap;">
+                            <button class="btn btn-secondary btn-sm" onclick="persistTicketToDisk('${tkt.id}')">💾 落盘</button>
+                            ${isAdmin ? `<button class="btn btn-secondary btn-sm" onclick="completeHandoffTicket('${tkt.id}')">✅ 完成</button>` : ''}
+                            <button class="btn btn-secondary btn-sm" onclick="closeBatchDetailModal();navigateTo('handoff');">🧾 交接箱</button>
+                        </div>
+                    </div>`;
+                }
+            }
+
+            const pa = card.pendingActions || [];
+            if (pa.length) {
+                const items = pa.map(a => `
+                    <div style="display:flex; align-items:center; justify-content:space-between; padding:6px 8px; background: rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.25); border-radius:6px; font-size:12px;">
+                        <span>${a.icon || '⏳'} ${a.label}</span>
+                        <span class="badge badge-warning">${a.count != null ? a.count : ''}</span>
+                    </div>
+                `).join('');
+                pendingActionsHtml = `
+                <div class="conflict-detail-section">
+                    <div class="conflict-detail-title">📋 待处理动作</div>
+                    <div style="display: flex; flex-direction: column; gap: 6px;">${items}</div>
+                </div>`;
+            }
+
+            const ep = card.exportPreview;
+            if (ep) {
+                const canExport = isAdmin && !isRevoked;
+                exportPreviewHtml = `
+                <div class="conflict-detail-section" style="background: linear-gradient(135deg, rgba(59,130,246,0.05), rgba(16,185,129,0.05); border:1px solid rgba(59,130,246,0.2); border-radius:8px;">
+                    <div class="conflict-detail-title">📄 导出预览</div>
+                    <div class="data-row"><span class="data-row-label">格式</span><span class="data-row-value"><span class="badge badge-info">${ep.format?.toUpperCase()}</span></span></div>
+                    <div class="data-row"><span class="data-row-label">记录数</span><span class="data-row-value">${ep.recordCount ?? '-'}</span></div>
+                    <div class="data-row"><span class="data-row-label">文件名</span><span class="data-row-value" style="font-size:12px; color:var(--text-secondary);">${ep.filename || '-'}</span></div>
+                    ${!canExport ? `<div style="margin-top:8px; padding:8px; background:rgba(239,68,68,0.08); border-radius:6px; font-size:12px; color:var(--danger);">志愿者只能查看导出预览，正式导出需管理员权限与签名。</div>` : `
+                    <div style="margin-top: 10px; display:flex; gap:6px; flex-wrap:wrap;">
+                        <button class="btn btn-success btn-sm" onclick="exportBatchCSV('${batch.id}')">✍️ 签名并导出 CSV</button>
+                        <button class="btn btn-primary btn-sm" onclick="exportBatchJSON('${batch.id}')">✍️ 签名并导出 JSON</button>
+                    </div>`}
+                </div>`;
+            }
         }
     }
     
     bodyEl.innerHTML = `
         ${sessionCardHtml}
+        ${handoffTicketHtml}
+        ${pendingActionsHtml}
+        ${exportPreviewHtml}
         <div class="conflict-detail-section">
             <div class="data-row">
                 <span class="data-row-label">文件名称</span>
@@ -2174,3 +2297,340 @@ async function exportBatchJSON(batchId) {
         console.error('Export batch JSON error:', error);
     }
 }
+
+function _formatHandoffStatus(status) {
+    const S = HANDOFF_TICKET_STATUS;
+    const map = {
+        [S.OPEN]:        { label: '待领取', cls: 'badge-warning' },
+        [S.IN_PROGRESS]: { label: '处理中', cls: 'badge-info' },
+        [S.CONFLICT]:    { label: '有冲突', cls: 'badge-danger' },
+        [S.COMPLETED]:   { label: '已完成', cls: 'badge-success' },
+        [S.CANCELLED]:   { label: '已取消', cls: 'badge-muted' },
+        [S.EXPIRED]:     { label: '已过期', cls: 'badge-muted' }
+    };
+    const m = map[status] || { label: status, cls: 'badge-muted' };
+    return `<span class="badge ${m.cls}">${m.label}</span>`;
+}
+
+function _renderHandoffStats(tickets) {
+    const now = Date.now();
+    const stats = { open: 0, inProgress: 0, conflict: 0, completed: 0, expired: 0, cancelled: 0 };
+    for (const t of tickets) {
+        if (t.status === HANDOFF_TICKET_STATUS.OPEN) stats.open++;
+        else if (t.status === HANDOFF_TICKET_STATUS.IN_PROGRESS) stats.inProgress++;
+        else if (t.status === HANDOFF_TICKET_STATUS.CONFLICT) stats.conflict++;
+        else if (t.status === HANDOFF_TICKET_STATUS.COMPLETED) stats.completed++;
+        else if (t.status === HANDOFF_TICKET_STATUS.EXPIRED) stats.expired++;
+        else if (t.status === HANDOFF_TICKET_STATUS.CANCELLED) stats.cancelled++;
+    }
+    const items = [
+        { label: '待领取', value: stats.open, cls: '' },
+        { label: '处理中', value: stats.inProgress, cls: '' },
+        { label: '有冲突', value: stats.conflict, cls: '' },
+        { label: '已完成', value: stats.completed, cls: '' },
+        { label: '已过期', value: stats.expired, cls: '' },
+        { label: '已取消', value: stats.cancelled, cls: '' }
+    ];
+    document.getElementById('handoff-stats').innerHTML = items.map(it => `
+        <div class="batch-stat">
+            <div class="batch-stat-value">${it.value}</div>
+            <div class="batch-stat-label">${it.label}</div>
+        </div>
+    `).join('');
+    const totalActive = stats.open + stats.inProgress + stats.conflict;
+    const badge = document.getElementById('handoff-badge');
+    if (totalActive > 0) {
+        badge.textContent = String(totalActive);
+        badge.style.display = 'inline-flex';
+    } else {
+        badge.style.display = 'none';
+    }
+}
+
+function _renderHandoffTicketCard(t) {
+    const statusBadge = _formatHandoffStatus(t.status);
+    const entryLabel = t.entryPage ? ({
+        dashboard: '首页提醒', distribute: '签到', conflicts: '复核',
+        batches: '导入', history: '记录', export: '导出', handoff: '交接箱'
+    }[t.entryPage] || t.entryPage) : '未知';
+    const pending = (t.pendingActions || []).map(a =>
+        `<span class="badge badge-warning" title="${a.label}">${a.label}</span>`
+    ).join(' ');
+    const actionsHtml = [];
+    const isMine = t.assignedTo === CURRENT_USER.id || t.createdBy === CURRENT_USER.id;
+    if (t.status === HANDOFF_TICKET_STATUS.OPEN || (!t.assignedTo && t.status !== HANDOFF_TICKET_STATUS.COMPLETED)) {
+        actionsHtml.push(`<button class="btn btn-primary btn-sm" onclick="claimHandoffTicket('${t.id}')">🖐️ 领取</button>`);
+    }
+    const canRestore = [HANDOFF_TICKET_STATUS.OPEN, HANDOFF_TICKET_STATUS.IN_PROGRESS, HANDOFF_TICKET_STATUS.CONFLICT].includes(t.status);
+    if (canRestore) {
+        actionsHtml.push(`<button class="btn btn-primary btn-sm" onclick="restoreFromHandoffTicket('${t.id}')">➡️ 继续处理</button>`);
+    }
+    if (isMine && canRestore) {
+        actionsHtml.push(`<button class="btn btn-secondary btn-sm" onclick="persistTicketToDisk('${t.id}')">💾 落盘</button>`);
+        actionsHtml.push(`<button class="btn btn-secondary btn-sm" onclick="cancelHandoffTicket('${t.id}')">取消</button>`);
+    }
+    if (t.status === HANDOFF_TICKET_STATUS.IN_PROGRESS || t.status === HANDOFF_TICKET_STATUS.CONFLICT) {
+        actionsHtml.push(`<button class="btn btn-success btn-sm" onclick="completeHandoffTicket('${t.id}')">✅ 完成</button>`);
+    }
+    const expiresLabel = t.expiresAt ? new Date(t.expiresAt).toLocaleString('zh-CN') : '-';
+    const snapshot = t.batchSnapshot || {};
+    return `
+        <div class="batch-card" data-ticket-id="${t.id}" data-batch-id="${t.batchId || ''}">
+            <div class="batch-header">
+                <div class="batch-title">
+                    🧾 #${t.id.slice(-8)} · ${snapshot.fileName || t.batchFileName || '未知批次'}
+                </div>
+                <div class="batch-meta">${statusBadge}</div>
+            </div>
+            <div class="batch-body">
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:6px;font-size:12px;">
+                    <div>🚪 入口: <b>${entryLabel}</b></div>
+                    <div>👤 发起人: ${t.createdByName || t.createdBy || '-'}</div>
+                    <div>📌 领取人: ${t.assignedToName || (t.assignedTo ? t.assignedTo.slice(-6) : '公开池')}</div>
+                    <div>⏰ 过期: ${expiresLabel}</div>
+                    <div>📊 总数: <b>${snapshot.recordCount ?? '-'}</b> | 失败: <b style="color:#ef4444;">${snapshot.failedCount ?? 0}</b> | 冲突: <b style="color:#f59e0b;">${snapshot.conflictCount ?? 0}</b></div>
+                    <div>📦 批次ID: <code style="font-size:11px;">${(t.batchId || '').slice(-10)}</code></div>
+                </div>
+                ${pending ? `<div style="margin-top:6px;">待处理: ${pending}</div>` : ''}
+                ${t.exportPreview ? `<div style="margin-top:6px;"><span class="badge badge-success">📄 ${t.exportPreview.format?.toUpperCase()} ${t.exportPreview.recordCount ?? 0}条 · ${t.exportPreview.filename || ''}</span></div>` : ''}
+                ${t.filtersSnapshot && Object.keys(t.filtersSnapshot).length ? `<div style="margin-top:6px;font-size:11px;color:#6b7280;">🔍 筛选条件已保存，点击继续处理自动还原</div>` : ''}
+            </div>
+            <div class="batch-actions">${actionsHtml.join('')}</div>
+        </div>
+    `;
+}
+
+let _handoffLastTickets = [];
+
+async function refreshHandoffView() {
+    try {
+        await handoffTicketEngine.cleanupExpired();
+        const tickets = await handoffTicketEngine.getAllTickets();
+        _handoffLastTickets = tickets;
+        _renderHandoffStats(tickets);
+        const listEl = document.getElementById('handoff-list');
+        if (!tickets.length) {
+            listEl.innerHTML = `<div class="empty-state"><div style="font-size:40px;">🧾</div><p>暂无交接票</p><p style="font-size:12px;">在首页/复核/记录/导入页面点击批次详情，将自动生成交接票</p></div>`;
+            return;
+        }
+        filterHandoff();
+    } catch (e) {
+        console.error('交接箱刷新失败', e);
+        showToast('交接箱刷新失败: ' + e.message);
+    }
+}
+
+function filterHandoff() {
+    const q = (document.getElementById('handoff-search')?.value || '').trim().toLowerCase();
+    const status = document.getElementById('handoff-status-filter')?.value || '';
+    let tickets = _handoffLastTickets.slice();
+    if (status) tickets = tickets.filter(t => t.status === status);
+    if (q) tickets = tickets.filter(t => {
+        const snap = t.batchSnapshot || {};
+        return (snap.fileName || t.batchFileName || '').toLowerCase().includes(q) ||
+               t.id.toLowerCase().includes(q) || (t.batchId || '').toLowerCase().includes(q);
+    });
+    const listEl = document.getElementById('handoff-list');
+    if (!tickets.length) {
+        listEl.innerHTML = `<div class="empty-state"><p>无符合条件的交接票</p></div>`;
+        return;
+    }
+    listEl.innerHTML = tickets.map(t => _renderHandoffTicketCard(t)).join('');
+}
+
+async function claimHandoffTicket(ticketId) {
+    try {
+        const hasPerm = await permissionGate.checkPermission(PERMISSION_ACTIONS.BATCH_IMPORT, ticketId);
+        if (!hasPerm) { showToast('无权限领取交接票'); return; }
+        await handoffTicketEngine.claimTicket(ticketId);
+        showToast('已领取交接票');
+        await refreshHandoffView();
+    } catch (e) {
+        showToast('领取失败: ' + e.message);
+        console.error(e);
+    }
+}
+
+async function restoreFromHandoffTicket(ticketId) {
+    try {
+        const ticket = await handoffTicketEngine.getTicket(ticketId);
+        if (!ticket) { showToast('交接票不存在'); return; }
+        if (ticket.assignedTo && ticket.assignedTo !== CURRENT_USER.id) {
+            if (!confirm(`该交接票已由「${ticket.assignedToName || ticket.assignedTo.slice(-6)}」领取，确认换人继续处理？`)) return;
+            await handoffTicketEngine.claimTicket(ticketId);
+        } else if (!ticket.assignedTo) {
+            await handoffTicketEngine.claimTicket(ticketId);
+        }
+        const restoreTarget = ticket.entryPage || 'dashboard';
+        const filters = ticket.filtersSnapshot || {};
+        const scroll = ticket.scrollPosition || 0;
+        const pending = ticket.pendingActions || [];
+        const exportPreview = ticket.exportPreview || null;
+        showToast(`正在恢复工作...入口:${restoreTarget} 批次:${(ticket.batchId||'').slice(-8)}`);
+        if (restoreTarget && typeof navigateTo === 'function') {
+            navigateTo(restoreTarget);
+        }
+        const savedCardId = ticket.sessionCardId;
+        if (savedCardId && typeof restoreSessionCardById === 'function') {
+            await restoreSessionCardById(savedCardId, {
+                overrideFilters: filters,
+                overrideScroll: scroll,
+                overridePendingActions: pending,
+                overrideExportPreview: exportPreview,
+                overrideHandoffTicketId: ticketId
+            });
+        }
+        if (ticket.batchId && typeof openBatchDetailModal === 'function') {
+            setTimeout(() => openBatchDetailModal(ticket.batchId, savedCardId), 120);
+        }
+    } catch (e) {
+        showToast('恢复失败: ' + e.message);
+        console.error(e);
+    }
+}
+
+async function cancelHandoffTicket(ticketId) {
+    if (!confirm('确定取消此交接票？')) return;
+    try {
+        const hasPerm = await permissionGate.checkPermission(PERMISSION_ACTIONS.BATCH_IMPORT, ticketId);
+        if (!hasPerm) { showToast('无权限'); return; }
+        await handoffTicketEngine.cancelTicket(ticketId, '手动取消');
+        showToast('已取消');
+        await refreshHandoffView();
+    } catch (e) {
+        showToast(e.message);
+        console.error(e);
+    }
+}
+
+async function completeHandoffTicket(ticketId) {
+    if (!confirm('确认此交接票所有工作已完成？')) return;
+    try {
+        const hasPerm = await permissionGate.checkPermission(PERMISSION_ACTIONS.BATCH_EXPORT, ticketId);
+        if (!hasPerm) { showToast('需要管理员权限完成'); return; }
+        let sig = null;
+        const cfg = await handoffConfigEngine.getConfig();
+        if (cfg.requireAdminSignature) {
+            const pwd = prompt('请输入管理员签名（确认密码）：');
+            if (!pwd) return;
+            sig = await permissionGate.signOperation(PERMISSION_ACTIONS.BATCH_EXPORT, ticketId, { ticketId, action: '完成交接票' }, pwd);
+            if (!sig) { showToast('签名失败'); return; }
+        } else {
+            sig = await permissionGate.signOperation(PERMISSION_ACTIONS.BATCH_EXPORT, ticketId, { ticketId, action: '完成交接票' });
+        }
+        await handoffTicketEngine.completeTicket(ticketId, { signature: sig, note: '操作员完成' });
+        await handoffTicketEngine.persistTicketToDisk(ticketId);
+        showToast('已完成并落盘');
+        await refreshHandoffView();
+    } catch (e) {
+        showToast(e.message);
+        console.error(e);
+    }
+}
+
+async function persistTicketToDisk(ticketId) {
+    try {
+        const r = await handoffTicketEngine.persistTicketToDisk(ticketId);
+        if (r && r.success) showToast('落盘成功: ' + r.manifest.filename);
+        else showToast('落盘请求已发送');
+    } catch (e) {
+        showToast(e.message);
+    }
+}
+
+function _ensureHandoffConfigModal() {
+    if (document.getElementById('handoff-config-modal')) return;
+    const wrap = document.createElement('div');
+    wrap.id = 'handoff-config-modal';
+    wrap.className = 'modal';
+    wrap.style.display = 'none';
+    wrap.innerHTML = `
+        <div class="modal-overlay" onclick="closeHandoffConfigModal()"></div>
+        <div class="modal-content" style="max-width:560px;">
+            <div class="modal-header"><h3>⚙️ 交接箱配置</h3><button class="close-btn" onclick="closeHandoffConfigModal()">✕</button></div>
+            <div class="modal-body">
+                <div class="form-row"><label>交接票保留时长（小时）</label><input type="number" id="cfg-retention" min="1" max="240"></div>
+                <div class="form-row"><label>同批次重复导入策略</label>
+                    <select id="cfg-dup">
+                        <option value="ASK">询问用户（默认）</option>
+                        <option value="MERGE">合并到现有批次</option>
+                        <option value="REJECT">拒绝重复导入</option>
+                        <option value="NEW_VERSION">新建版本</option>
+                    </select>
+                </div>
+                <div class="form-row"><label>正式导出命名模板（CSV）</label><input type="text" id="cfg-name-csv" placeholder="{date}_{time}_{batchName}.csv"></div>
+                <div class="form-row"><label>导出清单命名模板（JSON）</label><input type="text" id="cfg-name-json" placeholder="{date}_{time}_manifest.json"></div>
+                <div class="form-row"><label>管理员操作需签名确认</label><select id="cfg-sig"><option value="true">是</option><option value="false">否</option></select></div>
+                <div class="form-row"><label>允许跨用户转交</label><select id="cfg-cross"><option value="true">是</option><option value="false">否</option></select></div>
+                <div class="form-row"><label>自动清理过期</label><select id="cfg-cleanup"><option value="true">是</option><option value="false">否</option></select></div>
+                <p style="font-size:12px;color:#6b7280;margin-top:8px;">提示：配置变更立即生效；保留时长到期后交接票自动标记过期，再保留 7 倍时长后物理删除。</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeHandoffConfigModal()">取消</button>
+                <button class="btn btn-primary" onclick="saveHandoffConfig()">💾 保存配置</button>
+            </div>
+        </div>`;
+    document.body.appendChild(wrap);
+}
+
+async function openHandoffConfigModal() {
+    const hasPerm = await permissionGate.checkPermission(PERMISSION_ACTIONS.BATCH_IMPORT, '__config__');
+    if (!hasPerm) { showToast('只有管理员可修改配置'); return; }
+    _ensureHandoffConfigModal();
+    const cfg = await handoffConfigEngine.getConfig();
+    document.getElementById('cfg-retention').value = cfg.ticketRetentionHours;
+    document.getElementById('cfg-dup').value = cfg.duplicateImportStrategy;
+    document.getElementById('cfg-name-csv').value = cfg.exportNamingTemplates.batch_csv;
+    document.getElementById('cfg-name-json').value = cfg.exportNamingTemplates.batch_json;
+    document.getElementById('cfg-sig').value = cfg.requireAdminSignature ? 'true' : 'false';
+    document.getElementById('cfg-cross').value = cfg.allowCrossUserHandoff ? 'true' : 'false';
+    document.getElementById('cfg-cleanup').value = cfg.autoCleanupExpired ? 'true' : 'false';
+    document.getElementById('handoff-config-modal').style.display = 'flex';
+}
+
+function closeHandoffConfigModal() {
+    document.getElementById('handoff-config-modal').style.display = 'none';
+}
+
+async function saveHandoffConfig() {
+    try {
+        const hasPerm = await permissionGate.checkPermission(PERMISSION_ACTIONS.BATCH_IMPORT, '__config__');
+        if (!hasPerm) { showToast('只有管理员可修改配置'); return; }
+        const pwd = prompt('请输入管理员签名确认（确认密码）：');
+        if (!pwd) return;
+        const sig = await permissionGate.signOperation(PERMISSION_ACTIONS.BATCH_IMPORT, '__config__', { action: '修改交接箱配置' }, pwd);
+        if (!sig) { showToast('签名失败'); return; }
+        const hours = parseInt(document.getElementById('cfg-retention').value, 10);
+        if (!hours || hours < 1 || hours > 720) throw new Error('保留时长必须在 1-720 小时之间');
+        const newCfg = {
+            ticketRetentionHours: hours,
+            duplicateImportStrategy: document.getElementById('cfg-dup').value,
+            exportNamingTemplates: {
+                ...EXPORT_NAMING_TEMPLATES,
+                batch_csv: document.getElementById('cfg-name-csv').value || EXPORT_NAMING_TEMPLATES.batch_csv,
+                batch_json: document.getElementById('cfg-name-json').value || EXPORT_NAMING_TEMPLATES.batch_json
+            },
+            requireAdminSignature: document.getElementById('cfg-sig').value === 'true',
+            allowCrossUserHandoff: document.getElementById('cfg-cross').value === 'true',
+            autoCleanupExpired: document.getElementById('cfg-cleanup').value === 'true'
+        };
+        const saved = await handoffConfigEngine.saveConfig(newCfg);
+        showToast('配置已保存');
+        closeHandoffConfigModal();
+        await addAuditLog('handoff_config_updated', { config: saved, signature: sig });
+    } catch (e) {
+        showToast(e.message);
+        console.error(e);
+    }
+}
+
+window.refreshHandoffView = refreshHandoffView;
+window.filterHandoff = filterHandoff;
+window.claimHandoffTicket = claimHandoffTicket;
+window.restoreFromHandoffTicket = restoreFromHandoffTicket;
+window.cancelHandoffTicket = cancelHandoffTicket;
+window.completeHandoffTicket = completeHandoffTicket;
+window.persistTicketToDisk = persistTicketToDisk;
+window.openHandoffConfigModal = openHandoffConfigModal;
+window.closeHandoffConfigModal = closeHandoffConfigModal;
+window.saveHandoffConfig = saveHandoffConfig;

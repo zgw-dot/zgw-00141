@@ -1,0 +1,19 @@
+{
+  "filename": "SC5_EXPORT.csv",
+  "fileName": "SC5_EXPORT.csv",
+  "exportType": "csv",
+  "format": "csv",
+  "batchId": "batch_1781774248130_wogxiq91e",
+  "operator": {
+    "id": "e2e_admin",
+    "name": "未知"
+  },
+  "signature": {},
+  "recordCount": 0,
+  "timestamp": "2026-06-18T17:17:29.992505",
+  "sizeBytes": 8,
+  "fileSize": 8,
+  "filepath": "exports\\csv\\SC5_EXPORT.csv",
+  "filePath": "exports\\csv\\SC5_EXPORT.csv",
+  "absolutePath": "D:\\workSpace\\AI__SPACE\\02-label\\zgw-00141\\exports\\csv\\SC5_EXPORT.csv"
+}

@@ -1,0 +1,24 @@
+{
+  "filename": "物资批次_TEST_2024.xlsx.json",
+  "fileName": "物资批次_TEST_2024.xlsx.json",
+  "storeType": "handoff_tickets",
+  "type": "handoff_tickets",
+  "label": "交接票",
+  "batchId": "batch_1781774630804_566",
+  "ticketId": "handoff_1781774630804_6761",
+  "denialId": "denial_20260618_172350_807",
+  "exportId": null,
+  "action": "交接票",
+  "reason": "",
+  "operator": {
+    "id": "user_admin_001",
+    "name": "测试管理员",
+    "role": "unknown"
+  },
+  "timestamp": "2026-06-18T17:23:50.808506",
+  "sizeBytes": 432,
+  "fileSize": 432,
+  "filepath": "exports\\handoff_tickets\\物资批次_TEST_2024.xlsx.json",
+  "filePath": "exports\\handoff_tickets\\物资批次_TEST_2024.xlsx.json",
+  "absolutePath": "D:\\workSpace\\AI__SPACE\\02-label\\zgw-00141\\exports\\handoff_tickets\\物资批次_TEST_2024.xlsx.json"
+}

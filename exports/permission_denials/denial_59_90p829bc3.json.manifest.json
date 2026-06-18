@@ -1,0 +1,24 @@
+{
+  "filename": "denial_59_90p829bc3.json",
+  "fileName": "denial_59_90p829bc3.json",
+  "storeType": "permission_denials",
+  "type": "permission_denials",
+  "label": "权限拒绝记录",
+  "batchId": "batch_1781774017066_wgyq4ob5s",
+  "ticketId": null,
+  "denialId": "denial_20260618_171337_786",
+  "exportId": null,
+  "action": "权限拒绝记录",
+  "reason": "",
+  "operator": {
+    "id": "e2e_volunteer",
+    "name": "E2E志愿者",
+    "role": "volunteer"
+  },
+  "timestamp": "2026-06-18T17:13:37.787567",
+  "sizeBytes": 442,
+  "fileSize": 442,
+  "filepath": "exports\\permission_denials\\denial_59_90p829bc3.json",
+  "filePath": "exports\\permission_denials\\denial_59_90p829bc3.json",
+  "absolutePath": "D:\\workSpace\\AI__SPACE\\02-label\\zgw-00141\\exports\\permission_denials\\denial_59_90p829bc3.json"
+}

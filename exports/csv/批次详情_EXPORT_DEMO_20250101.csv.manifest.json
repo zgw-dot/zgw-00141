@@ -1,0 +1,22 @@
+{
+  "filename": "批次详情_EXPORT_DEMO_20250101.csv",
+  "fileName": "批次详情_EXPORT_DEMO_20250101.csv",
+  "exportType": "csv",
+  "format": "csv",
+  "batchId": "batch_1781774630834_8530",
+  "operator": {
+    "id": "user_admin_001",
+    "name": "未知"
+  },
+  "signature": {
+    "signedAt": 1781774630834,
+    "passwordVerified": true
+  },
+  "recordCount": 0,
+  "timestamp": "2026-06-18T17:23:50.837406",
+  "sizeBytes": 44,
+  "fileSize": 44,
+  "filepath": "exports\\csv\\批次详情_EXPORT_DEMO_20250101.csv",
+  "filePath": "exports\\csv\\批次详情_EXPORT_DEMO_20250101.csv",
+  "absolutePath": "D:\\workSpace\\AI__SPACE\\02-label\\zgw-00141\\exports\\csv\\批次详情_EXPORT_DEMO_20250101.csv"
+}

@@ -1,0 +1,12 @@
+{
+  "id": "denial_1781774992858_fm9d2av4n",
+  "action": "batch_export",
+  "actionLabel": "导出批次详情",
+  "userId": "user_1",
+  "userName": "志愿者小王",
+  "userRole": "volunteer",
+  "batchId": "batch_1781774990887_xuu4u9pz5",
+  "timestamp": 1781774992858,
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/143.0.7499.4 Safari/537.36",
+  "ip": "127.0.0.1"
+}

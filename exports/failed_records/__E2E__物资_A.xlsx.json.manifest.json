@@ -1,0 +1,24 @@
+{
+  "filename": "__E2E__物资_A.xlsx.json",
+  "fileName": "__E2E__物资_A.xlsx.json",
+  "storeType": "failed_records",
+  "type": "failed_records",
+  "label": "失败明细",
+  "batchId": "batch_1781774248130_wogxiq91e",
+  "ticketId": null,
+  "denialId": "denial_20260618_171729_680",
+  "exportId": null,
+  "action": "失败明细",
+  "reason": "",
+  "operator": {
+    "id": "e2e_admin",
+    "name": "未知",
+    "role": "unknown"
+  },
+  "timestamp": "2026-06-18T17:17:29.681289",
+  "sizeBytes": 334,
+  "fileSize": 334,
+  "filepath": "exports\\failed_records\\__E2E__物资_A.xlsx.json",
+  "filePath": "exports\\failed_records\\__E2E__物资_A.xlsx.json",
+  "absolutePath": "D:\\workSpace\\AI__SPACE\\02-label\\zgw-00141\\exports\\failed_records\\__E2E__物资_A.xlsx.json"
+}

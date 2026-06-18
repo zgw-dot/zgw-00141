@@ -492,13 +492,87 @@ class DataExporter {
     async exportBatchAndDownload(batchId, format = 'csv') {
         await permissionGate.signOperation(PERMISSION_ACTIONS.BATCH_EXPORT, batchId, { format });
         const content = await this.exportBatchDetail(batchId, format);
-        const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-        const filename = `批次详情_${batchId.slice(-8)}_${dateStr}.${format}`;
+
+        const batch = typeof batchEngine !== 'undefined' ? await batchEngine.getBatch(batchId) : null;
+        const batchName = batch ? batch.fileName.replace(/[\\/:*?"<>|]/g, '_') : batchId.slice(-8);
+
+        let filename;
+        if (typeof handoffConfigEngine !== 'undefined') {
+            try {
+                const recordCount = batch ? (batch.totalRecords || 0) : null;
+                filename = await handoffConfigEngine.generateExportFilename(`batch_${format}`, {
+                    batchName, batchId: batchId.slice(-8), recordCount
+                });
+            } catch (_) {}
+        }
+        if (!filename) {
+            const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+            filename = `批次详情_${batchId.slice(-8)}_${dateStr}.${format}`;
+        }
+
         const mimeType = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8';
-        
+        const recordCount = batch ? batch.totalRecords : null;
+
         this.downloadFile(content, filename, mimeType, 'batch_detail', batchId);
         await exportRecordEngine.recordExport('batch_detail', format, batchId, filename);
-        
+
+        if (typeof currentSessionCardId !== 'undefined' && currentSessionCardId &&
+            typeof sessionCardEngine !== 'undefined' &&
+            typeof sessionCardEngine.updateCardWithSnapshot === 'function') {
+            try {
+                const preview = { format, recordCount, filename };
+                await sessionCardEngine.updateCardWithSnapshot(currentSessionCardId, { exportPreview: preview });
+                if (typeof handoffTicketEngine !== 'undefined') {
+                    const card = await sessionCardEngine.getCard(currentSessionCardId);
+                    if (card && card.handoffTicketId) {
+                        await handoffTicketEngine.updateExportPreview(card.handoffTicketId, preview);
+                        await handoffTicketEngine.persistTicketToDisk(card.handoffTicketId);
+                    }
+                }
+            } catch (_) {}
+        }
+
+        if (batch && batch.failedRecords && batch.failedRecords.length && typeof fetch === 'function') {
+            try {
+                await fetch('/api/failed_records/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+                    body: JSON.stringify({
+                        filename: `failed_${batchId.slice(-8)}.json`,
+                        content: batch.failedRecords,
+                        type: 'failed_records',
+                        batchId,
+                        operator: { id: CURRENT_USER.id, name: CURRENT_USER.name, role: CURRENT_USER.role }
+                    })
+                });
+            } catch (_) {}
+        }
+
+        if (typeof fetch === 'function') {
+            try {
+                await fetch('/api/export_manifest/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+                    body: JSON.stringify({
+                        filename: `manifest_${batchId.slice(-8)}.json`,
+                        content: {
+                            batchId, filename, format, recordCount,
+                            exportedBy: { id: CURRENT_USER.id, name: CURRENT_USER.name, role: CURRENT_USER.role },
+                            exportedAt: Date.now(),
+                            batchSnapshot: batch ? {
+                                fileName: batch.fileName, totalRecords: batch.totalRecords,
+                                successCount: batch.successCount, conflictCount: batch.conflictCount,
+                                failedCount: (batch.failedRecords || []).length
+                            } : null
+                        },
+                        type: 'export_manifests',
+                        batchId,
+                        operator: { id: CURRENT_USER.id, name: CURRENT_USER.name, role: CURRENT_USER.role }
+                    })
+                });
+            } catch (_) {}
+        }
+
         return filename;
     }
 

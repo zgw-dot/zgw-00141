@@ -1,0 +1,11 @@
+{
+  "batchId": "batch_1781773533291_9187",
+  "action": "batch_export",
+  "userId": "user_volunteer_002",
+  "userName": "测试志愿者",
+  "userRole": "volunteer",
+  "reason": "权限不足：志愿者无法执行正式导出",
+  "timestamp": 1781773533291,
+  "signaturePrompted": true,
+  "_savedAt": "2026-06-18T17:05:33.296403"
+}

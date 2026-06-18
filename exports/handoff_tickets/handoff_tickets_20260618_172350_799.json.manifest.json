@@ -1,0 +1,24 @@
+{
+  "filename": "handoff_tickets_20260618_172350_799.json",
+  "fileName": "handoff_tickets_20260618_172350_799.json",
+  "storeType": "handoff_tickets",
+  "type": "handoff_tickets",
+  "label": "交接票",
+  "batchId": null,
+  "ticketId": null,
+  "denialId": "denial_20260618_172350_799",
+  "exportId": null,
+  "action": "交接票",
+  "reason": "",
+  "operator": {
+    "id": null,
+    "name": "未知",
+    "role": "unknown"
+  },
+  "timestamp": "2026-06-18T17:23:50.800249",
+  "sizeBytes": 59,
+  "fileSize": 59,
+  "filepath": "exports\\handoff_tickets\\handoff_tickets_20260618_172350_799.json",
+  "filePath": "exports\\handoff_tickets\\handoff_tickets_20260618_172350_799.json",
+  "absolutePath": "D:\\workSpace\\AI__SPACE\\02-label\\zgw-00141\\exports\\handoff_tickets\\handoff_tickets_20260618_172350_799.json"
+}

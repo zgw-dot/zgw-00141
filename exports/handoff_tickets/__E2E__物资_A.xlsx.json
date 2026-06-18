@@ -1,0 +1,17 @@
+{
+  "ticketId": "handoff_1781774248133_k1nhr5efq",
+  "batchId": "batch_1781774248130_wogxiq91e",
+  "fileName": "__E2E__物资_A.xlsx",
+  "entryPage": "history",
+  "createdBy": "e2e_admin",
+  "createdByName": "E2E管理员",
+  "status": "in_progress",
+  "createdAt": 1781774249684,
+  "expiresAt": 1781860649684,
+  "activityLog": [
+    {
+      "ts": 1781774249684
+    }
+  ],
+  "_savedAt": "2026-06-18T17:17:29.726578"
+}

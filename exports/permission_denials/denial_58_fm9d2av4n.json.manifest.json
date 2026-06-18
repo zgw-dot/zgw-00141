@@ -1,0 +1,24 @@
+{
+  "filename": "denial_58_fm9d2av4n.json",
+  "fileName": "denial_58_fm9d2av4n.json",
+  "storeType": "permission_denials",
+  "type": "permission_denials",
+  "label": "权限拒绝记录",
+  "batchId": "batch_1781774990887_xuu4u9pz5",
+  "ticketId": null,
+  "denialId": "denial_20260618_172952_861",
+  "exportId": null,
+  "action": "权限拒绝记录",
+  "reason": "",
+  "operator": {
+    "id": "user_1",
+    "name": "志愿者小王",
+    "role": "volunteer"
+  },
+  "timestamp": "2026-06-18T17:29:52.862596",
+  "sizeBytes": 409,
+  "fileSize": 409,
+  "filepath": "exports\\permission_denials\\denial_58_fm9d2av4n.json",
+  "filePath": "exports\\permission_denials\\denial_58_fm9d2av4n.json",
+  "absolutePath": "D:\\workSpace\\AI__SPACE\\02-label\\zgw-00141\\exports\\permission_denials\\denial_58_fm9d2av4n.json"
+}

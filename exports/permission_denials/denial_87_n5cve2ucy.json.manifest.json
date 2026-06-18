@@ -1,0 +1,24 @@
+{
+  "filename": "denial_87_n5cve2ucy.json",
+  "fileName": "denial_87_n5cve2ucy.json",
+  "storeType": "permission_denials",
+  "type": "permission_denials",
+  "label": "权限拒绝记录",
+  "batchId": "batch_1781774248130_wogxiq91e",
+  "ticketId": null,
+  "denialId": "denial_20260618_171729_092",
+  "exportId": null,
+  "action": "权限拒绝记录",
+  "reason": "",
+  "operator": {
+    "id": "e2e_volunteer",
+    "name": "E2E志愿者",
+    "role": "volunteer"
+  },
+  "timestamp": "2026-06-18T17:17:29.093555",
+  "sizeBytes": 440,
+  "fileSize": 440,
+  "filepath": "exports\\permission_denials\\denial_87_n5cve2ucy.json",
+  "filePath": "exports\\permission_denials\\denial_87_n5cve2ucy.json",
+  "absolutePath": "D:\\workSpace\\AI__SPACE\\02-label\\zgw-00141\\exports\\permission_denials\\denial_87_n5cve2ucy.json"
+}

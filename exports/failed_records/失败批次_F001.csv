@@ -1,0 +1,31 @@
+{
+  "batchId": "batch_1781774630811_6993",
+  "fileName": "失败批次_F001.csv",
+  "totalFailed": 3,
+  "records": [
+    {
+      "index": 1,
+      "name": "张三",
+      "errorType": "格式错误",
+      "message": "身份证长度不对",
+      "data": "..."
+    },
+    {
+      "index": 4,
+      "name": "李四",
+      "errorType": "物资不存在",
+      "message": "N95未配置",
+      "data": "..."
+    },
+    {
+      "index": 8,
+      "name": "王五",
+      "errorType": "数量超限",
+      "message": "口罩最多领5只",
+      "data": "..."
+    }
+  ],
+  "exportedBy": "user_admin_001",
+  "exportedAt": 1781774630811,
+  "_savedAt": "2026-06-18T17:23:50.815040"
+}

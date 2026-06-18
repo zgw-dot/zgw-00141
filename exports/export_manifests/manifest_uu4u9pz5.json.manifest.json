@@ -1,0 +1,24 @@
+{
+  "filename": "manifest_uu4u9pz5.json",
+  "fileName": "manifest_uu4u9pz5.json",
+  "storeType": "export_manifests",
+  "type": "export_manifests",
+  "label": "导出清单",
+  "batchId": "batch_1781774990887_xuu4u9pz5",
+  "ticketId": null,
+  "denialId": "denial_20260618_172954_522",
+  "exportId": null,
+  "action": "导出清单",
+  "reason": "",
+  "operator": {
+    "id": "user_1",
+    "name": "管理员老李",
+    "role": "admin"
+  },
+  "timestamp": "2026-06-18T17:29:54.523238",
+  "sizeBytes": 415,
+  "fileSize": 415,
+  "filepath": "exports\\export_manifests\\manifest_uu4u9pz5.json",
+  "filePath": "exports\\export_manifests\\manifest_uu4u9pz5.json",
+  "absolutePath": "D:\\workSpace\\AI__SPACE\\02-label\\zgw-00141\\exports\\export_manifests\\manifest_uu4u9pz5.json"
+}

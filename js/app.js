@@ -61,6 +61,22 @@ async function checkAndRestoreSessionCard() {
         return;
     }
 
+    if (activeCard.handoffTicketId && typeof handoffTicketEngine !== 'undefined') {
+        const ticket = await handoffTicketEngine.getTicket(activeCard.handoffTicketId);
+        if (ticket) {
+            const END = [HANDOFF_TICKET_STATUS.COMPLETED, HANDOFF_TICKET_STATUS.CANCELLED, HANDOFF_TICKET_STATUS.EXPIRED];
+            if (END.includes(ticket.status)) {
+                await sessionCardEngine.cancelCard(activeCard.id);
+                return;
+            }
+            if (ticket.assignedTo && ticket.assignedTo !== CURRENT_USER.id) {
+                const ok = confirm(`该会话已被「${ticket.assignedToName || ticket.assignedTo.slice(-6)}」领取，是否继续以新用户恢复？`);
+                if (!ok) { await sessionCardEngine.cancelCard(activeCard.id); return; }
+                await handoffTicketEngine.claimTicket(ticket.id);
+            }
+        }
+    }
+
     const sourceViewLabels = {
         'dashboard': '首页',
         'conflicts': '复核页',
@@ -79,43 +95,7 @@ async function checkAndRestoreSessionCard() {
 
     if (restore) {
         try {
-            await sessionCardEngine.restoreCard(activeCard.id);
-            
-            if (activeCard.filters) {
-                if (activeCard.sourceView === 'batches' && activeCard.filters.status) {
-                    batchFilters = { ...activeCard.filters };
-                } else if (activeCard.sourceView === 'history' && activeCard.filters.status) {
-                    setTimeout(() => {
-                        if (document.getElementById('filter-status')) {
-                            document.getElementById('filter-status').value = activeCard.filters.status || 'all';
-                        }
-                        if (document.getElementById('filter-supply')) {
-                            document.getElementById('filter-supply').value = activeCard.filters.supply || 'all';
-                        }
-                        if (document.getElementById('filter-batch')) {
-                            document.getElementById('filter-batch').value = activeCard.filters.batch || 'all';
-                        }
-                    }, 100);
-                }
-            }
-
-            if (activeCard.sourceView === 'dashboard') {
-                navigateTo('dashboard');
-            } else if (activeCard.sourceView === 'conflicts') {
-                navigateTo('conflicts');
-            } else if (activeCard.sourceView === 'history') {
-                navigateTo('history');
-            } else {
-                navigateTo('batches');
-            }
-
-            setTimeout(() => {
-                if (activeCard.scrollPosition > 0) {
-                    window.scrollTo(0, activeCard.scrollPosition);
-                }
-                openBatchDetailModal(activeCard.batchId, activeCard.id);
-            }, 300);
-
+            await restoreSessionCardById(activeCard.id);
             showToast('已恢复到上次的复查位置');
         } catch (error) {
             console.error('Failed to restore session card:', error);
@@ -125,6 +105,59 @@ async function checkAndRestoreSessionCard() {
         await sessionCardEngine.cancelCard(activeCard.id);
     }
 }
+
+async function restoreSessionCardById(cardId, options = {}) {
+    if (!cardId) return;
+    const activeCard = await sessionCardEngine.restoreCard(cardId);
+    if (!activeCard) throw new Error('会话卡不存在');
+
+    const filters = options.overrideFilters || activeCard.filters || {};
+    const scrollPos = options.overrideScroll != null ? options.overrideScroll : activeCard.scrollPosition;
+    const pending = options.overridePendingActions || activeCard.pendingActions || [];
+    const exportPreview = options.overrideExportPreview || activeCard.exportPreview || null;
+    const handoffTicketId = options.overrideHandoffTicketId || activeCard.handoffTicketId;
+
+    if (Object.keys(filters).length) {
+        if (activeCard.sourceView === 'batches' && filters.status) {
+            batchFilters = { ...filters };
+        } else if (activeCard.sourceView === 'history') {
+            setTimeout(() => {
+                if (document.getElementById('filter-status') && filters.status) {
+                    document.getElementById('filter-status').value = filters.status;
+                }
+                if (document.getElementById('filter-supply') && filters.supply) {
+                    document.getElementById('filter-supply').value = filters.supply;
+                }
+                if (document.getElementById('filter-batch') && filters.batch) {
+                    document.getElementById('filter-batch').value = filters.batch;
+                }
+                if (typeof onHistoryFilterChange === 'function') onHistoryFilterChange();
+            }, 100);
+        }
+    }
+
+    navigateTo(activeCard.sourceView || 'batches');
+
+    if (pending.length && typeof sessionCardEngine !== 'undefined' && typeof sessionCardEngine.updateCardWithSnapshot === 'function') {
+        try { await sessionCardEngine.updateCardWithSnapshot(cardId, { pendingActions: pending }); } catch (_) {}
+    }
+    if (exportPreview && typeof sessionCardEngine !== 'undefined' && typeof sessionCardEngine.updateCardWithSnapshot === 'function') {
+        try { await sessionCardEngine.updateCardWithSnapshot(cardId, { exportPreview }); } catch (_) {}
+    }
+    if (handoffTicketId && typeof handoffTicketEngine !== 'undefined') {
+        try {
+            const tkt = await handoffTicketEngine.getTicket(handoffTicketId);
+            if (tkt && tkt.assignedTo !== CURRENT_USER.id) await handoffTicketEngine.claimTicket(handoffTicketId);
+        } catch (_) {}
+    }
+
+    setTimeout(() => {
+        if (scrollPos > 0) window.scrollTo(0, scrollPos);
+        if (activeCard.batchId) openBatchDetailModal(activeCard.batchId, cardId);
+    }, 260);
+}
+
+window.restoreSessionCardById = restoreSessionCardById;
 
 async function createTestScenario() {
     console.log('=== 创建测试场景 ===');

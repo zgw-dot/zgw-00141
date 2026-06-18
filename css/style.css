@@ -1939,3 +1939,229 @@ html, body {
     }
 }
 
+.badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.badge-warning {
+    background: rgba(245, 158, 11, 0.12);
+    color: #d97706;
+}
+
+.badge-info {
+    background: rgba(59, 130, 246, 0.12);
+    color: #2563eb;
+}
+
+.badge-danger {
+    background: rgba(239, 68, 68, 0.12);
+    color: #dc2626;
+}
+
+.badge-success {
+    background: rgba(16, 185, 129, 0.12);
+    color: #059669;
+}
+
+.badge-muted {
+    background: rgba(107, 114, 128, 0.12);
+    color: #6b7280;
+}
+
+.handoff-toolbar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.handoff-toolbar .form-input {
+    flex: 1;
+    min-width: 140px;
+}
+
+.handoff-toolbar select {
+    min-width: 100px;
+}
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: none;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: var(--surface);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+}
+
+.btn:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+}
+
+.btn-primary {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+}
+
+.btn-primary:hover {
+    background: var(--primary-dark);
+    color: white;
+}
+
+.btn-success {
+    background: var(--success);
+    color: white;
+    border-color: var(--success);
+}
+
+.btn-danger {
+    background: var(--danger);
+    color: white;
+    border-color: var(--danger);
+}
+
+.btn-sm {
+    padding: 6px 10px;
+    font-size: 12px;
+}
+
+.handoff-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.handoff-ticket {
+    background: var(--surface);
+    border-radius: 12px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
+}
+
+.handoff-ticket-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 10px;
+}
+
+.handoff-ticket-id {
+    font-family: monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.handoff-ticket-status {
+    margin-left: 8px;
+}
+
+.handoff-ticket-main {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.handoff-ticket-meta {
+    font-size: 11px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+.handoff-ticket-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+}
+
+.handoff-ticket-empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.form-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.form-row label {
+    min-width: 110px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.form-row .form-input,
+.form-row select {
+    flex: 1;
+}
+
+.form-help {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin: -8px 0 12px;
+}
+
+.close-btn {
+    background: none;
+    border: none;
+    font-size: 20px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 4px;
+}
+
+.activity-log {
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 10px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.activity-item {
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(0,0,0,0.05);
+    font-size: 12px;
+}
+
+.activity-item:last-child { border-bottom: none; }
+
+.activity-time {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin-right: 6px;
+}
+
+.activity-user {
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-right: 6px;
+}
+
+.activity-action {
+    color: var(--text-secondary);
+}
+
+

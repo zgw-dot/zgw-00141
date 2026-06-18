@@ -1,0 +1,24 @@
+{
+  "filename": "permission_denials_20260618_172350_820.json",
+  "fileName": "permission_denials_20260618_172350_820.json",
+  "storeType": "permission_denials",
+  "type": "permission_denials",
+  "label": "权限拒绝记录",
+  "batchId": "batch_1781774630817_3335",
+  "ticketId": null,
+  "denialId": "denial_20260618_172350_820",
+  "exportId": null,
+  "action": "batch_export",
+  "reason": "权限不足：志愿者无法执行正式导出",
+  "operator": {
+    "id": "user_volunteer_002",
+    "name": "测试志愿者",
+    "role": "volunteer"
+  },
+  "timestamp": "2026-06-18T17:23:50.821123",
+  "sizeBytes": 290,
+  "fileSize": 290,
+  "filepath": "exports\\permission_denials\\permission_denials_20260618_172350_820.json",
+  "filePath": "exports\\permission_denials\\permission_denials_20260618_172350_820.json",
+  "absolutePath": "D:\\workSpace\\AI__SPACE\\02-label\\zgw-00141\\exports\\permission_denials\\permission_denials_20260618_172350_820.json"
+}

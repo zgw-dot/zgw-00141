@@ -1,0 +1,13 @@
+{
+  "ticketId": "handoff_1781774017067_f3e2kb3xy",
+  "batchId": "batch_1781774017066_wgyq4ob5s",
+  "action": "batch_export",
+  "userId": "e2e_volunteer",
+  "userName": "E2E志愿者",
+  "userRole": "volunteer",
+  "reason": "权限不足：志愿者角色禁止执行正式导出",
+  "timestamp": 1781774017475,
+  "signaturePrompted": false,
+  "fileHash": "E2E_SHA256_BATCH_A_1781774017066",
+  "_savedAt": "2026-06-18T17:13:38.095539"
+}

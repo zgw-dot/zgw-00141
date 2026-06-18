@@ -1,0 +1,17 @@
+{
+  "batchId": "batch_1781774248130_wogxiq91e",
+  "fileName": "__E2E__物资_A.xlsx",
+  "totalFailed": 1,
+  "records": [
+    {
+      "idx": 1,
+      "name": "x",
+      "errorType": "t",
+      "msg": "m",
+      "data": "{}"
+    }
+  ],
+  "exportedBy": "e2e_admin",
+  "exportedAt": 1781774249420,
+  "_savedAt": "2026-06-18T17:17:29.680743"
+}

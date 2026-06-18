@@ -1,0 +1,24 @@
+{
+  "filename": "handoff_33_k1nhr5efq.json",
+  "fileName": "handoff_33_k1nhr5efq.json",
+  "storeType": "handoff_tickets",
+  "type": "handoff_tickets",
+  "label": "交接票",
+  "batchId": "batch_1781774248130_wogxiq91e",
+  "ticketId": null,
+  "denialId": "denial_20260618_171728_442",
+  "exportId": null,
+  "action": "交接票",
+  "reason": "",
+  "operator": {
+    "id": "e2e_admin",
+    "name": "E2E管理员",
+    "role": "admin"
+  },
+  "timestamp": "2026-06-18T17:17:28.444019",
+  "sizeBytes": 1088,
+  "fileSize": 1088,
+  "filepath": "exports\\handoff_tickets\\handoff_33_k1nhr5efq.json",
+  "filePath": "exports\\handoff_tickets\\handoff_33_k1nhr5efq.json",
+  "absolutePath": "D:\\workSpace\\AI__SPACE\\02-label\\zgw-00141\\exports\\handoff_tickets\\handoff_33_k1nhr5efq.json"
+}

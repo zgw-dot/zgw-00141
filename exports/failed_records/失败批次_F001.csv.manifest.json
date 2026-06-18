@@ -1,0 +1,24 @@
+{
+  "filename": "失败批次_F001.csv",
+  "fileName": "失败批次_F001.csv",
+  "storeType": "failed_records",
+  "type": "failed_records",
+  "label": "失败明细",
+  "batchId": "batch_1781774630811_6993",
+  "ticketId": null,
+  "denialId": "denial_20260618_172350_814",
+  "exportId": null,
+  "action": "失败明细",
+  "reason": "",
+  "operator": {
+    "id": "user_admin_001",
+    "name": "未知",
+    "role": "unknown"
+  },
+  "timestamp": "2026-06-18T17:23:50.815619",
+  "sizeBytes": 600,
+  "fileSize": 600,
+  "filepath": "exports\\failed_records\\失败批次_F001.csv",
+  "filePath": "exports\\failed_records\\失败批次_F001.csv",
+  "absolutePath": "D:\\workSpace\\AI__SPACE\\02-label\\zgw-00141\\exports\\failed_records\\失败批次_F001.csv"
+}

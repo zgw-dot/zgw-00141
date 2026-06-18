@@ -1,0 +1,12 @@
+{
+  "ticketId": "handoff_1781774248133_k1nhr5efq",
+  "batchId": "batch_1781774248130_wogxiq91e",
+  "action": "batch_export",
+  "userId": "e2e_volunteer",
+  "userName": "E2E志愿者",
+  "userRole": "volunteer",
+  "reason": "志愿者无权导出",
+  "timestamp": 1781774248492,
+  "signaturePrompted": false,
+  "_savedAt": "2026-06-18T17:17:29.099993"
+}

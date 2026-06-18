@@ -1,0 +1,24 @@
+{
+  "filename": "handoff_37_js6e8rdu1.json",
+  "fileName": "handoff_37_js6e8rdu1.json",
+  "storeType": "handoff_tickets",
+  "type": "handoff_tickets",
+  "label": "交接票",
+  "batchId": "batch_1781774990887_xuu4u9pz5",
+  "ticketId": null,
+  "denialId": "denial_20260618_172954_510",
+  "exportId": null,
+  "action": "交接票",
+  "reason": "",
+  "operator": {
+    "id": "user_1",
+    "name": "管理员老李",
+    "role": "admin"
+  },
+  "timestamp": "2026-06-18T17:29:54.511610",
+  "sizeBytes": 1534,
+  "fileSize": 1534,
+  "filepath": "exports\\handoff_tickets\\handoff_37_js6e8rdu1.json",
+  "filePath": "exports\\handoff_tickets\\handoff_37_js6e8rdu1.json",
+  "absolutePath": "D:\\workSpace\\AI__SPACE\\02-label\\zgw-00141\\exports\\handoff_tickets\\handoff_37_js6e8rdu1.json"
+}

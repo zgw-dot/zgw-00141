@@ -1,0 +1,12 @@
+{
+  "id": "denial_1781774248473_vk5ludz2s",
+  "action": "batch_retry",
+  "actionLabel": "重试失败项",
+  "userId": "e2e_volunteer",
+  "userName": "E2E志愿者",
+  "userRole": "volunteer",
+  "batchId": "batch_1781774248130_wogxiq91e",
+  "timestamp": 1781774248473,
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) TraeCN/1.107.1 Chrome/142.0.7444.235 Electron/39.2.7 Safari/537.36",
+  "ip": "127.0.0.1"
+}
