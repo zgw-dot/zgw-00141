@@ -104,17 +104,26 @@ async function refreshStats() {
 
     const partialBatches = await batchEngine.getBatches({ status: BATCH_STATUS.PARTIAL });
     const processingBatches = await batchEngine.getBatches({ status: BATCH_STATUS.PROCESSING });
+    const allPendingBatches = [...partialBatches, ...processingBatches].sort((a, b) => b.timestamp - a.timestamp);
     const batchAlertSection = document.getElementById('batch-alert-section');
     const batchAlertDesc = document.getElementById('batch-alert-desc');
+    const batchAlertBtn = document.getElementById('batch-alert-btn');
     
-    const pendingBatchCount = partialBatches.length + processingBatches.length;
+    const pendingBatchCount = allPendingBatches.length;
     if (batchAlertSection && pendingBatchCount > 0) {
         batchAlertSection.style.display = 'block';
+        pendingAlertBatchId = allPendingBatches[0].id;
         if (batchAlertDesc) {
-            batchAlertDesc.textContent = `${pendingBatchCount} 个批次需要处理`;
+            const firstBatch = allPendingBatches[0];
+            const conflictCount = firstBatch.conflictCount || 0;
+            batchAlertDesc.textContent = `${pendingBatchCount} 个批次需要处理 · ${firstBatch.fileName} 有 ${conflictCount} 条待复核`;
+        }
+        if (batchAlertBtn) {
+            batchAlertBtn.onclick = () => navigateToBatch(pendingAlertBatchId);
         }
     } else if (batchAlertSection) {
         batchAlertSection.style.display = 'none';
+        pendingAlertBatchId = null;
     }
 }
 
@@ -932,6 +941,8 @@ let currentFileName = null;
 let selectedRoleForSwitch = null;
 let selectedBatchIdForDetail = null;
 let batchFilters = { status: 'all', source: 'all', startDate: '', endDate: '' };
+let previousViewState = { batchFilters: null, historyFilters: null, scrollPosition: 0 };
+let pendingAlertBatchId = null;
 
 function refreshUserDisplay() {
     const avatarEl = document.getElementById('user-avatar');
@@ -1436,6 +1447,23 @@ function getBatchStatusLabel(status) {
     return labels[status] || status;
 }
 
+function getBatchActionLabel(action) {
+    const labels = {
+        [BATCH_ACTIONS.APPROVE_ALL]: '批量通过',
+        [BATCH_ACTIONS.REJECT_ALL]: '批量驳回',
+        [BATCH_ACTIONS.RETRY_FAILED]: '重试失败项',
+        [BATCH_ACTIONS.REVOKE_BATCH]: '撤销批次'
+    };
+    return labels[action] || action || '';
+}
+
+function formatLastOperation(lastOperation) {
+    if (!lastOperation) return null;
+    const actionLabel = getBatchActionLabel(lastOperation.type);
+    const time = formatDate(lastOperation.timestamp);
+    return `${actionLabel} ${lastOperation.count} 条 · ${lastOperation.operatorName} · ${time}`;
+}
+
 function getBatchStatusClass(status) {
     const classes = {
         [BATCH_STATUS.PROCESSING]: 'pending',
@@ -1489,6 +1517,7 @@ async function renderBatchList() {
     listEl.innerHTML = batches.map(batch => {
         const statusClass = getBatchStatusClass(batch.status);
         const statusLabel = getBatchStatusLabel(batch.status);
+        const lastOperationText = formatLastOperation(batch.lastOperation);
 
         return `
             <div class="batch-card" onclick="openBatchDetailModal('${batch.id}')">
@@ -1517,10 +1546,16 @@ async function renderBatchList() {
                         <span class="batch-stat-label">冲突</span>
                     </div>
                     <div class="batch-stat-item danger">
-                        <span class="batch-stat-num">${batch.revokedCount}</span>
+                        <span class="batch-stat-num">${batch.revokedCount || 0}</span>
                         <span class="batch-stat-label">已撤销</span>
                     </div>
                 </div>
+                ${lastOperationText ? `
+                <div class="batch-last-op">
+                    <span class="last-op-icon">📝</span>
+                    <span class="last-op-text">${lastOperationText}</span>
+                </div>
+                ` : ''}
                 <div class="batch-footer">
                     <span class="batch-operator">${batch.createdByName}</span>
                     <span class="batch-time">${formatDate(batch.timestamp)}</span>
@@ -1531,9 +1566,59 @@ async function renderBatchList() {
 }
 
 async function navigateToBatch(batchId) {
+    if (currentView === 'batches') {
+        previousViewState.batchFilters = { ...batchFilters };
+        previousViewState.scrollPosition = window.scrollY || document.documentElement.scrollTop;
+    } else if (currentView === 'history') {
+        previousViewState.historyFilters = {
+            status: document.getElementById('filter-status')?.value || 'all',
+            supply: document.getElementById('filter-supply')?.value || 'all',
+            batch: document.getElementById('filter-batch')?.value || 'all'
+        };
+        previousViewState.scrollPosition = window.scrollY || document.documentElement.scrollTop;
+    }
+
     selectedBatchIdForDetail = batchId;
+    
+    const batch = await batchEngine.getBatch(batchId);
+    if (batch && batch.status) {
+        batchFilters = {
+            status: batch.status,
+            source: 'all',
+            startDate: '',
+            endDate: ''
+        };
+    }
+
     navigateTo('batches');
-    setTimeout(() => openBatchDetailModal(batchId), 100);
+    
+    const tryOpenModal = (attempts = 0) => {
+        const batchList = document.getElementById('batch-list');
+        if (batchList && batchList.children.length > 0) {
+            setTimeout(() => {
+                openBatchDetailModal(batchId);
+                if (previousViewState.scrollPosition > 0) {
+                    window.scrollTo(0, previousViewState.scrollPosition);
+                }
+            }, 50);
+        } else if (attempts < 10) {
+            setTimeout(() => tryOpenModal(attempts + 1), 50);
+        }
+    };
+    tryOpenModal();
+}
+
+async function navigateBackFromBatch() {
+    if (previousViewState.batchFilters) {
+        batchFilters = { ...previousViewState.batchFilters };
+        previousViewState.batchFilters = null;
+    }
+    if (previousViewState.scrollPosition > 0) {
+        setTimeout(() => {
+            window.scrollTo(0, previousViewState.scrollPosition);
+            previousViewState.scrollPosition = 0;
+        }, 50);
+    }
 }
 
 async function openBatchDetailModal(batchId) {
@@ -1658,6 +1743,8 @@ async function openBatchDetailModal(batchId) {
         `;
     }
 
+    const lastOperationText = formatLastOperation(batch.lastOperation);
+    
     bodyEl.innerHTML = `
         <div class="conflict-detail-section">
             <div class="data-row">
@@ -1680,6 +1767,12 @@ async function openBatchDetailModal(batchId) {
                 <span class="data-row-label">创建时间</span>
                 <span class="data-row-value">${formatDate(batch.timestamp)}</span>
             </div>
+            ${lastOperationText ? `
+            <div class="data-row">
+                <span class="data-row-label">最近操作</span>
+                <span class="data-row-value" style="color: var(--info);">${lastOperationText}</span>
+            </div>
+            ` : ''}
             ${batch.revokedAt ? `
             <div class="data-row">
                 <span class="data-row-label">撤销时间</span>
@@ -1719,10 +1812,11 @@ async function openBatchDetailModal(batchId) {
 
         ${hasPending && !isAdmin ? `
         <div class="conflict-detail-section" style="color: var(--danger); font-size: 12px; padding: 12px; background: rgba(239, 68, 68, 0.1); border-radius: 8px;">
-            ⚠️ 您当前是志愿者身份，只能查看结果，不能执行批量操作。
+            ⚠️ 您当前是志愿者身份，只能查看结果，不能执行批量操作和导出。
         </div>
         ` : ''}
 
+        ${isAdmin ? `
         <div class="conflict-detail-section">
             <div class="conflict-detail-title">导出批次</div>
             <div style="display: flex; gap: 8px;">
@@ -1730,6 +1824,7 @@ async function openBatchDetailModal(batchId) {
                 <button class="modal-btn" style="flex: 1; background: rgba(59, 130, 246, 0.1); color: var(--primary); padding: 10px;" onclick="exportBatchJSON('${batch.id}')">导出 JSON</button>
             </div>
         </div>
+        ` : ''}
     `;
 
     let footerHtml = '<button class="modal-btn reject" onclick="closeBatchDetailModal()">关闭</button>';
@@ -1776,9 +1871,17 @@ function toggleBatchRecords() {
 function closeBatchDetailModal() {
     document.getElementById('batch-detail-modal').style.display = 'none';
     selectedBatchIdForDetail = null;
+    navigateBackFromBatch();
+    if (currentView === 'batches') {
+        refreshBatchesView();
+    }
 }
 
 async function batchApproveAll(batchId) {
+    if (CURRENT_USER.role !== ROLES.ADMIN) {
+        showToast('只有管理员可以执行此操作');
+        return;
+    }
     if (!confirm('确定要批量通过该批次的所有待处理冲突吗？')) return;
     
     try {
@@ -1796,6 +1899,10 @@ async function batchApproveAll(batchId) {
 }
 
 async function batchRejectAll(batchId) {
+    if (CURRENT_USER.role !== ROLES.ADMIN) {
+        showToast('只有管理员可以执行此操作');
+        return;
+    }
     if (!confirm('确定要批量驳回该批次的所有待处理冲突吗？')) return;
     
     try {
@@ -1813,6 +1920,10 @@ async function batchRejectAll(batchId) {
 }
 
 async function batchRetryFailed(batchId) {
+    if (CURRENT_USER.role !== ROLES.ADMIN) {
+        showToast('只有管理员可以执行此操作');
+        return;
+    }
     if (!confirm('确定要重试该批次的所有失败项吗？')) return;
     
     try {
@@ -1829,6 +1940,10 @@ async function batchRetryFailed(batchId) {
 }
 
 async function batchRevoke(batchId) {
+    if (CURRENT_USER.role !== ROLES.ADMIN) {
+        showToast('只有管理员可以执行此操作');
+        return;
+    }
     if (!confirm('确定要撤销该批次吗？撤销后已同步的记录将回滚库存，且无法恢复。')) return;
     
     try {
@@ -1879,6 +1994,10 @@ window.exportBatchCSV = exportBatchCSV;
 window.exportBatchJSON = exportBatchJSON;
 
 async function exportBatchCSV(batchId) {
+    if (CURRENT_USER.role !== ROLES.ADMIN) {
+        showToast('只有管理员可以导出批次详情');
+        return;
+    }
     try {
         const filename = await dataExporter.exportBatchAndDownload(batchId, 'csv');
         showToast(`已导出: ${filename}`);
@@ -1889,6 +2008,10 @@ async function exportBatchCSV(batchId) {
 }
 
 async function exportBatchJSON(batchId) {
+    if (CURRENT_USER.role !== ROLES.ADMIN) {
+        showToast('只有管理员可以导出批次详情');
+        return;
+    }
     try {
         const filename = await dataExporter.exportBatchAndDownload(batchId, 'json');
         showToast(`已导出: ${filename}`);

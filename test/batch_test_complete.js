@@ -87,20 +87,26 @@ async function runCompleteBatchTest() {
     IMPORT_SOURCES.CSV_IMPORT, 
     csvBatch.id
   );
-  console.log('  2.6 执行导入: 成功', csvResult.success.length, '条, 冲突', csvResult.conflicts.length, '条');
+  console.log('  2.6 执行导入: 成功', csvResult.imported.length, '条, 冲突', csvResult.conflicted.length, '条');
 
   // 2.7 记录失败项
   for (const err of csvErrors) {
-    await batchEngine.addFailedRecord(csvBatch.id, err.index, err.type, err.message, err.data);
+    const errRecordData = {
+      residentName: err.residentName,
+      supplyName: err.supplyName,
+      quantity: err.quantity,
+      idCard: err.idCard
+    };
+    await batchEngine.addFailedRecord(csvBatch.id, err.rowIndex, err.conflictType, err.errors.join('; '), errRecordData);
   }
 
   // 2.8 更新批次状态
-  const csvStatus = (csvResult.conflicts.length > 0 || csvErrors.length > 0) 
+  const csvStatus = (csvResult.conflicted.length > 0 || csvErrors.length > 0) 
     ? BATCH_STATUS.PARTIAL 
     : BATCH_STATUS.COMPLETED;
   await batchEngine.updateBatchStats(csvBatch.id, {
-    successCount: csvResult.success.length,
-    conflictCount: csvResult.conflicts.length,
+    successCount: csvResult.imported.length,
+    conflictCount: csvResult.conflicted.length,
     status: csvStatus
   });
 
@@ -159,15 +165,21 @@ async function runCompleteBatchTest() {
   );
 
   for (const err of jsonErrors) {
-    await batchEngine.addFailedRecord(jsonBatch.id, err.index, err.type, err.message, err.data);
+    const errRecordData = {
+      residentName: err.residentName,
+      supplyName: err.supplyName,
+      quantity: err.quantity,
+      idCard: err.idCard
+    };
+    await batchEngine.addFailedRecord(jsonBatch.id, err.rowIndex, err.conflictType, err.errors.join('; '), errRecordData);
   }
 
-  const jsonStatus = (jsonResult.conflicts.length > 0 || jsonErrors.length > 0)
+  const jsonStatus = (jsonResult.conflicted.length > 0 || jsonErrors.length > 0)
     ? BATCH_STATUS.PARTIAL
     : BATCH_STATUS.COMPLETED;
   await batchEngine.updateBatchStats(jsonBatch.id, {
-    successCount: jsonResult.success.length,
-    conflictCount: jsonResult.conflicts.length,
+    successCount: jsonResult.imported.length,
+    conflictCount: jsonResult.conflicted.length,
     status: jsonStatus
   });
 

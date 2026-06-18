@@ -195,6 +195,13 @@ class ImportEngine {
             validated.push(result);
         }
 
+        const validRecords = validated.filter(r => r.valid);
+        const errorRecords = validated.filter(r => !r.valid);
+        
+        Object.defineProperty(validated, 'validated', { value: validRecords, enumerable: false });
+        Object.defineProperty(validated, 'errors', { value: errorRecords, enumerable: false });
+        Object.defineProperty(validated, 'records', { value: validated, enumerable: false });
+
         return validated;
     }
 
@@ -978,7 +985,13 @@ class BatchEngine {
             failedRecords: [],
             distributionIds: [],
             conflictIds: [],
-            notes: null
+            notes: null,
+            lastOperation: {
+                type: BATCH_ACTIONS.APPROVE_ALL,
+                operatorName: CURRENT_USER.name,
+                timestamp: Date.now(),
+                count: 0
+            }
         };
 
         await db.put(STORES.BATCHES, batch);
@@ -1118,6 +1131,20 @@ class BatchEngine {
             approvedCount++;
         }
 
+        batch.conflictCount = Math.max(0, batch.conflictCount - approvedCount);
+        batch.lastOperation = {
+            type: BATCH_ACTIONS.APPROVE_ALL,
+            operatorName: CURRENT_USER.name,
+            timestamp: Date.now(),
+            count: approvedCount
+        };
+
+        if (batch.conflictCount === 0) {
+            batch.status = BATCH_STATUS.COMPLETED;
+        }
+
+        await db.put(STORES.BATCHES, batch);
+
         await addAuditLog('batch_approve', {
             batchId,
             approvedCount,
@@ -1142,6 +1169,20 @@ class BatchEngine {
             await syncEngine.resolveConflict(conflict.id, 'reject');
             rejectedCount++;
         }
+
+        batch.conflictCount = Math.max(0, batch.conflictCount - rejectedCount);
+        batch.lastOperation = {
+            type: BATCH_ACTIONS.REJECT_ALL,
+            operatorName: CURRENT_USER.name,
+            timestamp: Date.now(),
+            count: rejectedCount
+        };
+
+        if (batch.conflictCount === 0) {
+            batch.status = BATCH_STATUS.COMPLETED;
+        }
+
+        await db.put(STORES.BATCHES, batch);
 
         await addAuditLog('batch_reject', {
             batchId,
@@ -1170,15 +1211,29 @@ class BatchEngine {
                 if (revalidate.success) {
                     await db.delete(STORES.CONFLICTS, conflict.id);
 
-                dist.status = DISTRIBUTION_STATUS.PENDING;
-                dist.batchId = batchId;
-                await db.put(STORES.DISTRIBUTIONS, dist);
+                    dist.status = DISTRIBUTION_STATUS.PENDING;
+                    dist.batchId = batchId;
+                    await db.put(STORES.DISTRIBUTIONS, dist);
 
-                await syncEngine.addToQueue('create_distribution', dist);
-                retriedCount++;
+                    await syncEngine.addToQueue('create_distribution', dist);
+                    retriedCount++;
                 }
             }
         }
+
+        batch.conflictCount = Math.max(0, batch.conflictCount - retriedCount);
+        batch.lastOperation = {
+            type: BATCH_ACTIONS.RETRY_FAILED,
+            operatorName: CURRENT_USER.name,
+            timestamp: Date.now(),
+            count: retriedCount
+        };
+
+        if (batch.conflictCount === 0) {
+            batch.status = BATCH_STATUS.COMPLETED;
+        }
+
+        await db.put(STORES.BATCHES, batch);
 
         await addAuditLog('batch_retry', {
             batchId,
@@ -1277,6 +1332,12 @@ class BatchEngine {
         batch.revokedAt = Date.now();
         batch.revokedBy = CURRENT_USER.id;
         batch.revokedByName = CURRENT_USER.name;
+        batch.lastOperation = {
+            type: BATCH_ACTIONS.REVOKE_BATCH,
+            operatorName: CURRENT_USER.name,
+            timestamp: Date.now(),
+            count: revokedCount
+        };
         await db.put(STORES.BATCHES, batch);
 
         const conflicts = await this.getBatchConflicts(batchId);

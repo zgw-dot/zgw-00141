@@ -238,25 +238,50 @@ class DataExporter {
         const supplies = await db.getAll(STORES.SUPPLIES);
         const supplyMap = new Map(supplies.map(s => [s.id, s]));
 
-        const enriched = distributions.map(d => ({
-            ...d,
-            supplyName: supplyMap.get(d.supplyId)?.name || '未知物资',
-            formattedDate: formatDate(d.timestamp),
-            statusText: d.revoked ? '已撤销' : (d.rejected ? '已驳回' : this.getStatusText(d.status)),
-            syncedDateText: d.syncedAt ? formatDate(d.syncedAt) : '',
-            importSourceText: d.importSource ? this.getImportSourceText(d.importSource) : '手动录入'
-        }));
+        const residents = await db.getAll(STORES.RESIDENTS);
+        const residentMap = new Map(residents.map(r => [r.id, r]));
+        
+        const enriched = distributions.map(d => {
+            const resident = residentMap.get(d.residentId);
+            const processingResult = d.revoked ? '已撤销' : 
+                                   d.rejected ? '已驳回' : 
+                                   d.status === DISTRIBUTION_STATUS.SYNCED ? '已通过' : 
+                                   d.status === DISTRIBUTION_STATUS.CONFLICTED ? '待复核' : '处理中';
+            return {
+                ...d,
+                residentIdCard: resident?.idCard || '',
+                supplyName: supplyMap.get(d.supplyId)?.name || '未知物资',
+                formattedDate: formatDate(d.timestamp),
+                statusText: d.revoked ? '已撤销' : (d.rejected ? '已驳回' : this.getStatusText(d.status)),
+                syncedDateText: d.syncedAt ? formatDate(d.syncedAt) : '',
+                importSourceText: d.importSource ? this.getImportSourceText(d.importSource) : '手动录入',
+                batchId: batch.id,
+                batchFileName: batch.fileName,
+                processingResult: processingResult,
+                errorType: d.importErrors ? '导入验证错误' : '',
+                errorTypeLabel: d.importErrors ? '导入验证错误' : '',
+                errorMessage: d.importErrors ? d.importErrors.join('; ') : '',
+                resolvedByName: d.resolvedByName || '',
+                resolvedAt: d.resolvedAt ? formatDate(d.resolvedAt) : ''
+            };
+        });
 
         const failedEnriched = failedRecords.map((f, idx) => ({
             id: `failed_${idx}`,
             residentName: f.recordData?.residentName || '',
+            residentIdCard: f.recordData?.idCard || '',
             supplyName: f.recordData?.supplyName || '',
             quantity: f.recordData?.quantity || '',
             formattedDate: formatDate(batch.timestamp),
             statusText: '导入失败',
-            errorType: f.errorType,
-            errorMessage: f.errorMessage,
-            importSourceText: batch.source ? this.getImportSourceText(batch.source) : '未知'
+            errorType: f.type,
+            errorMessage: f.message,
+            errorTypeLabel: this.getConflictTypeLabel(f.type),
+            importSourceText: batch.source ? this.getImportSourceText(batch.source) : '未知',
+            batchId: batch.id,
+            batchFileName: batch.fileName,
+            processingResult: '待复查',
+            rowIndex: f.index
         }));
 
         const allRecords = [...enriched, ...failedEnriched];
@@ -281,6 +306,20 @@ class DataExporter {
             [BATCH_STATUS.REVOKED]: '已撤销'
         };
         return map[status] || status;
+    }
+
+    getConflictTypeLabel(type) {
+        const labels = {
+            [CONFLICT_TYPES.STOCK_OVERFLOW]: '库存不足',
+            [CONFLICT_TYPES.DUPLICATE_DISTRIBUTION]: '重复领取',
+            [CONFLICT_TYPES.DAILY_LIMIT_EXCEEDED]: '超每日限领',
+            [CONFLICT_TYPES.INVALID_RESIDENT]: '居民不存在',
+            [CONFLICT_TYPES.INVALID_SUPPLY]: '物资不存在',
+            [CONFLICT_TYPES.IMPORT_VALIDATION_ERROR]: '导入验证错误',
+            [CONFLICT_TYPES.VERSION_CONFLICT]: '版本冲突',
+            [CONFLICT_TYPES.PERMISSION_DENIED]: '权限不足'
+        };
+        return labels[type] || type || '未知错误';
     }
 
     exportBatchesToCSV(data) {
@@ -314,21 +353,29 @@ class DataExporter {
 
     exportBatchDetailToCSV(data, batch) {
         const headers = [
-            '记录ID', '居民姓名', '物资名称', '领取数量', '领取时间',
-            '状态', '同步时间', '数据来源', '错误类型', '错误信息'
+            '行号', '居民姓名', '身份证号', '物资名称', '领取数量',
+            '领取时间', '状态', '处理结果', '数据来源',
+            '错误类型', '错误信息', '批次号', '批次文件',
+            '处理人', '处理时间', '同步时间'
         ];
 
         const rows = data.map(d => [
-            d.id,
+            d.rowIndex || d.importRow || '',
             d.residentName || '',
+            maskIdCard(d.residentIdCard || ''),
             d.supplyName || '',
             d.quantity || '',
             d.formattedDate,
             d.statusText,
-            d.syncedDateText || '',
+            d.processingResult || '',
             d.importSourceText || '',
-            d.errorType || '',
-            (d.errorMessage || '').replace(/,/g, '，').replace(/\n/g, ' ')
+            d.errorTypeLabel || d.errorType || '',
+            (d.errorMessage || '').replace(/,/g, '，').replace(/\n/g, ' '),
+            d.batchId || batch.id,
+            d.batchFileName || batch.fileName,
+            d.resolvedByName || '',
+            d.resolvedAt || '',
+            d.syncedDateText || ''
         ]);
 
         const batchHeader = [
@@ -339,8 +386,9 @@ class DataExporter {
             `创建时间: ${formatDate(batch.timestamp)}`,
             `成功数: ${batch.successCount || 0}`,
             `冲突数: ${batch.conflictCount || 0}`,
+            `失败数: ${(batch.failedRecords || []).length}`,
             `已撤销数: ${batch.revokedCount || 0}`,
-            '', ''
+            '', '', '', '', '', '', ''
         ];
 
         const csvContent = [
@@ -364,12 +412,21 @@ class DataExporter {
             content = await this.exportDistributions(format, startDate, endDate);
             filename = `领取记录_${dateStr}.${format}`;
         } else if (type === 'audit') {
+            if (CURRENT_USER.role !== ROLES.ADMIN) {
+                throw new Error('只有管理员可以导出审计日志');
+            }
             content = await this.exportAuditLogs(format, startDate, endDate);
             filename = `审计日志_${dateStr}.${format}`;
         } else if (type === 'batches') {
+            if (CURRENT_USER.role !== ROLES.ADMIN) {
+                throw new Error('只有管理员可以导出批次列表');
+            }
             content = await this.exportBatches(format, startDate, endDate);
             filename = `批次列表_${dateStr}.${format}`;
         } else if (type === 'both') {
+            if (CURRENT_USER.role !== ROLES.ADMIN) {
+                throw new Error('只有管理员可以导出审计日志');
+            }
             const distContent = await this.exportDistributions(format, startDate, endDate);
             const auditContent = await this.exportAuditLogs(format, startDate, endDate);
             
@@ -392,6 +449,9 @@ class DataExporter {
     }
 
     async exportBatchAndDownload(batchId, format = 'csv') {
+        if (CURRENT_USER.role !== ROLES.ADMIN) {
+            throw new Error('只有管理员可以导出批次详情');
+        }
         const content = await this.exportBatchDetail(batchId, format);
         const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
         const filename = `批次详情_${batchId.slice(-8)}_${dateStr}.${format}`;
@@ -400,6 +460,14 @@ class DataExporter {
         this.downloadFile(content, filename, mimeType);
         
         return filename;
+    }
+
+    async exportBatchCSV(batchId) {
+        return await this.exportBatchAndDownload(batchId, 'csv');
+    }
+
+    async exportBatchJSON(batchId) {
+        return await this.exportBatchAndDownload(batchId, 'json');
     }
 }
 
