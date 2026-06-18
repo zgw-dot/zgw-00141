@@ -1,0 +1,13 @@
+{
+  "filename": "批次详情_测试导出_20240101.csv",
+  "exportType": "batch_detail",
+  "batchId": "batch_test_001",
+  "operator": {
+    "role": "admin",
+    "name": "系统管理员",
+    "id": "user_admin_001"
+  },
+  "timestamp": "2026-06-18T13:58:09.187925",
+  "sizeBytes": 86,
+  "filepath": "exports\\batch_detail\\批次详情_测试导出_20240101.csv"
+}

@@ -738,18 +738,10 @@ class SyncEngine {
         const conflict = await db.get(STORES.CONFLICTS, conflictId);
         if (!conflict) throw new Error('冲突不存在');
 
-        let effectiveRole = CURRENT_USER.role;
-        try {
-            const stored = localStorage.getItem(USER_STORAGE_KEY);
-            if (stored) {
-                const data = JSON.parse(stored);
-                effectiveRole = data.role || effectiveRole;
-            }
-        } catch (e) {}
-        
-        if (effectiveRole !== ROLES.ADMIN) {
-            throw new Error('只有管理员可以复核冲突');
-        }
+        await permissionGate.signOperation(PERMISSION_ACTIONS.CONFLICT_RESOLVE, conflict.batchId, {
+            conflictId,
+            resolution
+        });
 
         const distribution = await db.get(STORES.DISTRIBUTIONS, conflict.distributionId);
         const supply = distribution.supplyId ? await db.get(STORES.SUPPLIES, distribution.supplyId) : null;
@@ -772,6 +764,11 @@ class SyncEngine {
         conflict.resolvedByName = CURRENT_USER.name;
         conflict.resolvedAt = Date.now();
         conflict.resolution = resolution;
+        conflict.resolutionSignature = await permissionGate.signOperation(
+            PERMISSION_ACTIONS.CONFLICT_RESOLVE,
+            conflict.batchId,
+            { conflictId, resolution }
+        );
 
         await db.put(STORES.CONFLICTS, conflict);
 
@@ -849,18 +846,10 @@ class SyncEngine {
             throw new Error('没有可撤销的操作');
         }
 
-        let effectiveRole = CURRENT_USER.role;
-        try {
-            const stored = localStorage.getItem(USER_STORAGE_KEY);
-            if (stored) {
-                const data = JSON.parse(stored);
-                effectiveRole = data.role || effectiveRole;
-            }
-        } catch (e) {}
-        
-        if (effectiveRole !== ROLES.ADMIN) {
-            throw new Error('只有管理员可以撤销操作');
-        }
+        await permissionGate.signOperation(PERMISSION_ACTIONS.CONFLICT_UNDO, snapshot.conflict?.batchId, {
+            conflictId: snapshot.conflict?.id,
+            originalResolution: snapshot.resolution
+        });
 
         const { conflict, distribution, supplyBefore, serverSupplyBefore, resolution } = snapshot;
 
@@ -965,10 +954,15 @@ class BatchEngine {
 
     async checkDuplicateImport(fileHash) {
         const existingBatches = await db.getAll(STORES.BATCHES, 'fileHash', IDBKeyRange.only(fileHash));
-        return existingBatches.length > 0 ? existingBatches[0] : null;
+        const activeBatches = existingBatches.filter(b => b.status !== BATCH_STATUS.REVOKED);
+        return activeBatches.length > 0 ? activeBatches[0] : null;
     }
 
-    async createBatch(importSource, fileName, fileHash, totalRecords) {
+    async createBatch(importSource, fileName, fileHash, totalRecords, parentBatchId = null, isReimport = false) {
+        const existingBatches = fileHash ? await db.getAll(STORES.BATCHES, 'fileHash', IDBKeyRange.only(fileHash)) : [];
+        const reimportCount = existingBatches.filter(b => b.fileHash === fileHash).length;
+        const importVersion = reimportCount + 1;
+
         const batch = {
             id: generateId('batch'),
             source: importSource,
@@ -986,9 +980,14 @@ class BatchEngine {
             distributionIds: [],
             conflictIds: [],
             notes: null,
+            importVersion: importVersion,
+            parentBatchId: parentBatchId,
+            isReimport: isReimport,
+            stateVersion: Date.now(),
             lastOperation: {
                 type: BATCH_ACTIONS.APPROVE_ALL,
                 operatorName: CURRENT_USER.name,
+                operatorRole: CURRENT_USER.role,
                 timestamp: Date.now(),
                 count: 0
             }
@@ -1000,8 +999,76 @@ class BatchEngine {
             batchId: batch.id,
             source: importSource,
             fileName: fileName,
-            totalRecords
+            totalRecords,
+            importVersion,
+            parentBatchId,
+            isReimport
         });
+
+        return batch;
+    }
+
+    async reimportBatch(originalBatchId) {
+        const originalBatch = await db.get(STORES.BATCHES, originalBatchId);
+        if (!originalBatch) {
+            throw new Error('原批次不存在');
+        }
+
+        if (originalBatch.status !== BATCH_STATUS.REVOKED) {
+            throw new Error('只有已撤销的批次才能重新导入');
+        }
+
+        const newBatch = await this.createBatch(
+            originalBatch.source,
+            `${originalBatch.fileName} (重导v${(originalBatch.importVersion || 1) + 1})`,
+            originalBatch.fileHash,
+            originalBatch.totalRecords,
+            originalBatchId,
+            true
+        );
+
+        return newBatch;
+    }
+
+    async getBatchVersionHistory(batchId) {
+        const batch = await db.get(STORES.BATCHES, batchId);
+        if (!batch) return [];
+
+        const history = [batch];
+        let currentId = batch.parentBatchId;
+
+        while (currentId) {
+            const parent = await db.get(STORES.BATCHES, currentId);
+            if (parent) {
+                history.unshift(parent);
+                currentId = parent.parentBatchId;
+            } else {
+                break;
+            }
+        }
+
+        return history;
+    }
+
+    async validateBatchState(batchId, expectedVersion = null) {
+        const batch = await db.get(STORES.BATCHES, batchId);
+        if (!batch) {
+            throw new Error('批次不存在');
+        }
+
+        if (expectedVersion !== null && batch.stateVersion !== expectedVersion) {
+            throw new Error('批次状态已变更，请刷新后重试');
+        }
+
+        return batch;
+    }
+
+    async incrementBatchVersion(batchId) {
+        const batch = await db.get(STORES.BATCHES, batchId);
+        if (!batch) return null;
+
+        batch.stateVersion = Date.now();
+        await db.put(STORES.BATCHES, batch);
 
         return batch;
     }
@@ -1116,12 +1183,16 @@ class BatchEngine {
     }
 
     async batchApprove(batchId) {
-        if (CURRENT_USER.role !== ROLES.ADMIN) {
-            throw new Error('只有管理员可以批量通过');
-        }
+        await permissionGate.signOperation(PERMISSION_ACTIONS.BATCH_APPROVE, batchId, {
+            action: '批量通过'
+        });
 
         const batch = await db.get(STORES.BATCHES, batchId);
         if (!batch) throw new Error('批次不存在');
+
+        if (batch.status === BATCH_STATUS.REVOKED) {
+            throw new Error('批次已撤销，无法执行批量通过');
+        }
 
         const pendingConflicts = await this.getBatchPendingConflicts(batchId);
         let approvedCount = 0;
@@ -1135,8 +1206,10 @@ class BatchEngine {
         batch.lastOperation = {
             type: BATCH_ACTIONS.APPROVE_ALL,
             operatorName: CURRENT_USER.name,
+            operatorRole: CURRENT_USER.role,
             timestamp: Date.now(),
-            count: approvedCount
+            count: approvedCount,
+            signature: await permissionGate.signOperation(PERMISSION_ACTIONS.BATCH_APPROVE, batchId, { count: approvedCount })
         };
 
         if (batch.conflictCount === 0) {
@@ -1148,19 +1221,24 @@ class BatchEngine {
         await addAuditLog('batch_approve', {
             batchId,
             approvedCount,
-            batchName: batch.fileName
+            batchName: batch.fileName,
+            operatorRole: CURRENT_USER.role
         });
 
         return approvedCount;
     }
 
     async batchReject(batchId) {
-        if (CURRENT_USER.role !== ROLES.ADMIN) {
-            throw new Error('只有管理员可以批量驳回');
-        }
+        await permissionGate.signOperation(PERMISSION_ACTIONS.BATCH_REJECT, batchId, {
+            action: '批量驳回'
+        });
 
         const batch = await db.get(STORES.BATCHES, batchId);
         if (!batch) throw new Error('批次不存在');
+
+        if (batch.status === BATCH_STATUS.REVOKED) {
+            throw new Error('批次已撤销，无法执行批量驳回');
+        }
 
         const pendingConflicts = await this.getBatchPendingConflicts(batchId);
         let rejectedCount = 0;
@@ -1174,8 +1252,10 @@ class BatchEngine {
         batch.lastOperation = {
             type: BATCH_ACTIONS.REJECT_ALL,
             operatorName: CURRENT_USER.name,
+            operatorRole: CURRENT_USER.role,
             timestamp: Date.now(),
-            count: rejectedCount
+            count: rejectedCount,
+            signature: await permissionGate.signOperation(PERMISSION_ACTIONS.BATCH_REJECT, batchId, { count: rejectedCount })
         };
 
         if (batch.conflictCount === 0) {
@@ -1187,19 +1267,24 @@ class BatchEngine {
         await addAuditLog('batch_reject', {
             batchId,
             rejectedCount,
-            batchName: batch.fileName
+            batchName: batch.fileName,
+            operatorRole: CURRENT_USER.role
         });
 
         return rejectedCount;
     }
 
     async retryFailedRecords(batchId) {
-        if (CURRENT_USER.role !== ROLES.ADMIN) {
-            throw new Error('只有管理员可以重试失败项');
-        }
+        await permissionGate.signOperation(PERMISSION_ACTIONS.BATCH_RETRY, batchId, {
+            action: '重试失败项'
+        });
 
         const batch = await db.get(STORES.BATCHES, batchId);
         if (!batch) throw new Error('批次不存在');
+
+        if (batch.status === BATCH_STATUS.REVOKED) {
+            throw new Error('批次已撤销，无法重试失败项');
+        }
 
         const pendingConflicts = await this.getBatchPendingConflicts(batchId);
         let retriedCount = 0;
@@ -1225,8 +1310,10 @@ class BatchEngine {
         batch.lastOperation = {
             type: BATCH_ACTIONS.RETRY_FAILED,
             operatorName: CURRENT_USER.name,
+            operatorRole: CURRENT_USER.role,
             timestamp: Date.now(),
-            count: retriedCount
+            count: retriedCount,
+            signature: await permissionGate.signOperation(PERMISSION_ACTIONS.BATCH_RETRY, batchId, { count: retriedCount })
         };
 
         if (batch.conflictCount === 0) {
@@ -1238,7 +1325,8 @@ class BatchEngine {
         await addAuditLog('batch_retry', {
             batchId,
             retriedCount,
-            batchName: batch.fileName
+            batchName: batch.fileName,
+            operatorRole: CURRENT_USER.role
         });
 
         return retriedCount;
@@ -1277,12 +1365,15 @@ class BatchEngine {
     }
 
     async revokeBatch(batchId) {
-        if (CURRENT_USER.role !== ROLES.ADMIN) {
-            throw new Error('只有管理员可以撤销批次');
+        const batch = await this.validateBatchState(batchId);
+
+        if (batch.status === BATCH_STATUS.REVOKED) {
+            throw new Error('批次已撤销，请勿重复操作');
         }
 
-        const batch = await db.get(STORES.BATCHES, batchId);
-        if (!batch) throw new Error('批次不存在');
+        await permissionGate.requirePermission(PERMISSION_ACTIONS.BATCH_REVOKE, batchId);
+
+        const originalStateVersion = batch.stateVersion;
 
         const distributions = await this.getBatchDistributions(batchId);
         const serverState = await db.get(STORES.SERVER_STATE, 'server_supplies');
@@ -1309,6 +1400,15 @@ class BatchEngine {
                 dist.revokedBy = CURRENT_USER.id;
                 dist.revokedByName = CURRENT_USER.name;
                 dist.status = DISTRIBUTION_STATUS.CONFLICTED;
+                dist.batchStateVersion = originalStateVersion;
+                dist.revocationSignature = await permissionGate.signOperation(
+                    PERMISSION_ACTIONS.BATCH_REVOKE, 
+                    batchId, 
+                    { 
+                        distributionId: dist.id,
+                        batchStateVersion: originalStateVersion
+                    }
+                );
                 await db.put(STORES.DISTRIBUTIONS, dist);
 
                 revokedCount++;
@@ -1317,6 +1417,15 @@ class BatchEngine {
                 dist.revokedAt = Date.now();
                 dist.revokedBy = CURRENT_USER.id;
                 dist.revokedByName = CURRENT_USER.name;
+                dist.batchStateVersion = originalStateVersion;
+                dist.revocationSignature = await permissionGate.signOperation(
+                    PERMISSION_ACTIONS.BATCH_REVOKE, 
+                    batchId, 
+                    { 
+                        distributionId: dist.id,
+                        batchStateVersion: originalStateVersion
+                    }
+                );
                 await db.put(STORES.DISTRIBUTIONS, dist);
 
                 revokedCount++;
@@ -1332,13 +1441,37 @@ class BatchEngine {
         batch.revokedAt = Date.now();
         batch.revokedBy = CURRENT_USER.id;
         batch.revokedByName = CURRENT_USER.name;
+        batch.stateVersion = Date.now();
+        batch.revocationSignature = await permissionGate.signOperation(
+            PERMISSION_ACTIONS.BATCH_REVOKE, 
+            batchId, 
+            { 
+                revokedCount,
+                originalStateVersion,
+                newStateVersion: batch.stateVersion
+            }
+        );
         batch.lastOperation = {
             type: BATCH_ACTIONS.REVOKE_BATCH,
             operatorName: CURRENT_USER.name,
+            operatorRole: CURRENT_USER.role,
             timestamp: Date.now(),
-            count: revokedCount
+            count: revokedCount,
+            originalStateVersion,
+            newStateVersion: batch.stateVersion,
+            signature: batch.revocationSignature
         };
         await db.put(STORES.BATCHES, batch);
+
+        const activeCards = await db.getAll(STORES.SESSION_CARDS, 'batchId', IDBKeyRange.only(batchId));
+        for (const card of activeCards) {
+            if (card.status === SESSION_CARD_STATUS.ACTIVE || card.status === SESSION_CARD_STATUS.RESTORING) {
+                card.status = SESSION_CARD_STATUS.CANCELLED;
+                card.cancelledAt = Date.now();
+                card.cancelReason = '批次已撤销';
+                await db.put(STORES.SESSION_CARDS, card);
+            }
+        }
 
         const conflicts = await this.getBatchConflicts(batchId);
         for (const conflict of conflicts) {
@@ -1348,6 +1481,11 @@ class BatchEngine {
                 conflict.resolvedByName = CURRENT_USER.name;
                 conflict.resolvedAt = Date.now();
                 conflict.resolution = 'reject';
+                conflict.resolutionSignature = await permissionGate.signOperation(
+                    PERMISSION_ACTIONS.CONFLICT_RESOLVE,
+                    batchId,
+                    { conflictId: conflict.id, resolution: 'reject' }
+                );
                 await db.put(STORES.CONFLICTS, conflict);
 
                 const conflictDist = await db.get(STORES.DISTRIBUTIONS, conflict.distributionId);
@@ -1365,7 +1503,10 @@ class BatchEngine {
         await addAuditLog('batch_revoke', {
             batchId,
             revokedCount,
-            batchName: batch.fileName
+            batchName: batch.fileName,
+            operatorRole: CURRENT_USER.role,
+            originalStateVersion,
+            newStateVersion: batch.stateVersion
         });
 
         return revokedCount;

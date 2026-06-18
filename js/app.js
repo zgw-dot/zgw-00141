@@ -38,12 +38,91 @@ async function initApp() {
         
         refreshUserDisplay();
         
+        await checkAndRestoreSessionCard();
+        
+        await sessionCardEngine.cleanupExpiredCards();
+        
         console.log('App initialized successfully');
         console.log('Current user:', CURRENT_USER.name, '(', CURRENT_USER.role === ROLES.ADMIN ? '管理员' : '志愿者', ')');
         
     } catch (error) {
         console.error('App initialization error:', error);
         showToast('应用初始化失败，请刷新页面重试');
+    }
+}
+
+async function checkAndRestoreSessionCard() {
+    const activeCard = await sessionCardEngine.getActiveCard();
+    if (!activeCard) return;
+
+    const batch = await batchEngine.getBatch(activeCard.batchId);
+    if (!batch) {
+        await sessionCardEngine.cancelCard(activeCard.id);
+        return;
+    }
+
+    const sourceViewLabels = {
+        'dashboard': '首页',
+        'conflicts': '复核页',
+        'history': '记录页',
+        'batches': '导入中心'
+    };
+    const sourceLabel = sourceViewLabels[activeCard.sourceView] || '上一页面';
+
+    const restore = confirm(
+        `🔄 检测到未完成的复查会话\n\n` +
+        `批次: ${batch.fileName}\n` +
+        `来源: ${sourceLabel}\n` +
+        `创建: ${formatDate(activeCard.createdAt)}\n\n` +
+        `是否回到该批次继续处理？`
+    );
+
+    if (restore) {
+        try {
+            await sessionCardEngine.restoreCard(activeCard.id);
+            
+            if (activeCard.filters) {
+                if (activeCard.sourceView === 'batches' && activeCard.filters.status) {
+                    batchFilters = { ...activeCard.filters };
+                } else if (activeCard.sourceView === 'history' && activeCard.filters.status) {
+                    setTimeout(() => {
+                        if (document.getElementById('filter-status')) {
+                            document.getElementById('filter-status').value = activeCard.filters.status || 'all';
+                        }
+                        if (document.getElementById('filter-supply')) {
+                            document.getElementById('filter-supply').value = activeCard.filters.supply || 'all';
+                        }
+                        if (document.getElementById('filter-batch')) {
+                            document.getElementById('filter-batch').value = activeCard.filters.batch || 'all';
+                        }
+                    }, 100);
+                }
+            }
+
+            if (activeCard.sourceView === 'dashboard') {
+                navigateTo('dashboard');
+            } else if (activeCard.sourceView === 'conflicts') {
+                navigateTo('conflicts');
+            } else if (activeCard.sourceView === 'history') {
+                navigateTo('history');
+            } else {
+                navigateTo('batches');
+            }
+
+            setTimeout(() => {
+                if (activeCard.scrollPosition > 0) {
+                    window.scrollTo(0, activeCard.scrollPosition);
+                }
+                openBatchDetailModal(activeCard.batchId, activeCard.id);
+            }, 300);
+
+            showToast('已恢复到上次的复查位置');
+        } catch (error) {
+            console.error('Failed to restore session card:', error);
+            showToast('恢复会话失败，请手动进入批次');
+        }
+    } else {
+        await sessionCardEngine.cancelCard(activeCard.id);
     }
 }
 
@@ -279,3 +358,4 @@ window.switchToVolunteer = switchToVolunteer;
 window.simulateOffline = simulateOffline;
 window.simulateOnline = simulateOnline;
 window.verifyDataConsistency = verifyDataConsistency;
+window.checkAndRestoreSessionCard = checkAndRestoreSessionCard;

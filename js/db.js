@@ -1,4 +1,4 @@
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const DB_NAME = 'shelter_supply_db';
 
 const STORES = {
@@ -9,7 +9,10 @@ const STORES = {
     CONFLICTS: 'conflicts',
     AUDIT_LOGS: 'audit_logs',
     SERVER_STATE: 'server_state',
-    BATCHES: 'batches'
+    BATCHES: 'batches',
+    SESSION_CARDS: 'session_cards',
+    PERMISSION_DENIALS: 'permission_denials',
+    EXPORT_RECORDS: 'export_records'
 };
 
 const BATCH_STATUS = {
@@ -116,6 +119,45 @@ class Database {
                     batchStore.createIndex('source', 'source', { unique: false });
                     batchStore.createIndex('createdBy', 'createdBy', { unique: false });
                     batchStore.createIndex('fileHash', 'fileHash', { unique: false });
+                }
+
+                if (!db.objectStoreNames.contains(STORES.SESSION_CARDS)) {
+                    const sessionStore = db.createObjectStore(STORES.SESSION_CARDS, { keyPath: 'id' });
+                    sessionStore.createIndex('batchId', 'batchId', { unique: false });
+                    sessionStore.createIndex('userId', 'userId', { unique: false });
+                    sessionStore.createIndex('sourceView', 'sourceView', { unique: false });
+                    sessionStore.createIndex('createdAt', 'createdAt', { unique: false });
+                    sessionStore.createIndex('status', 'status', { unique: false });
+                } else if (oldVersion < 3) {
+                    const sessionStore = event.target.transaction.objectStore(STORES.SESSION_CARDS);
+                    if (!sessionStore.indexNames.contains('batchId')) {
+                        sessionStore.createIndex('batchId', 'batchId', { unique: false });
+                    }
+                }
+
+                if (!db.objectStoreNames.contains(STORES.PERMISSION_DENIALS)) {
+                    const denialStore = db.createObjectStore(STORES.PERMISSION_DENIALS, { keyPath: 'id' });
+                    denialStore.createIndex('timestamp', 'timestamp', { unique: false });
+                    denialStore.createIndex('userId', 'userId', { unique: false });
+                    denialStore.createIndex('action', 'action', { unique: false });
+                    denialStore.createIndex('batchId', 'batchId', { unique: false });
+                } else if (oldVersion < 3) {
+                    const denialStore = event.target.transaction.objectStore(STORES.PERMISSION_DENIALS);
+                    if (!denialStore.indexNames.contains('batchId')) {
+                        denialStore.createIndex('batchId', 'batchId', { unique: false });
+                    }
+                }
+
+                if (!db.objectStoreNames.contains(STORES.EXPORT_RECORDS)) {
+                    const exportStore = db.createObjectStore(STORES.EXPORT_RECORDS, { keyPath: 'id' });
+                    exportStore.createIndex('timestamp', 'timestamp', { unique: false });
+                    exportStore.createIndex('batchId', 'batchId', { unique: false });
+                    exportStore.createIndex('userId', 'userId', { unique: false });
+                } else if (oldVersion < 3) {
+                    const exportStore = event.target.transaction.objectStore(STORES.EXPORT_RECORDS);
+                    if (!exportStore.indexNames.contains('batchId')) {
+                        exportStore.createIndex('batchId', 'batchId', { unique: false });
+                    }
                 }
             };
         });
@@ -364,3 +406,452 @@ async function addAuditLog(action, details) {
     await db.put(STORES.AUDIT_LOGS, log);
     return log;
 }
+
+const SESSION_CARD_STATUS = {
+    ACTIVE: 'active',
+    COMPLETED: 'completed',
+    CANCELLED: 'cancelled',
+    RESTORING: 'restoring'
+};
+
+const PERMISSION_ACTIONS = {
+    BATCH_VIEW: 'view_batch',
+    DISTRIBUTION_VIEW: 'view_distribution',
+    CONFLICT_VIEW: 'view_conflict',
+    EXPORT_PREVIEW: 'export_preview',
+    BATCH_APPROVE: 'batch_approve',
+    BATCH_REJECT: 'batch_reject',
+    BATCH_RETRY: 'batch_retry',
+    BATCH_REVOKE: 'batch_revoke',
+    BATCH_EXPORT: 'batch_export',
+    EXPORT_AUDIT: 'export_audit',
+    EXPORT_BATCHES: 'export_batches',
+    CONFLICT_RESOLVE: 'conflict_resolve',
+    CONFLICT_UNDO: 'conflict_undo'
+};
+
+const PERMISSION_MATRIX = {
+    [ROLES.VOLUNTEER]: [
+        PERMISSION_ACTIONS.BATCH_VIEW,
+        PERMISSION_ACTIONS.DISTRIBUTION_VIEW,
+        PERMISSION_ACTIONS.CONFLICT_VIEW,
+        PERMISSION_ACTIONS.EXPORT_PREVIEW
+    ],
+    [ROLES.ADMIN]: [
+        PERMISSION_ACTIONS.BATCH_VIEW,
+        PERMISSION_ACTIONS.DISTRIBUTION_VIEW,
+        PERMISSION_ACTIONS.CONFLICT_VIEW,
+        PERMISSION_ACTIONS.EXPORT_PREVIEW,
+        PERMISSION_ACTIONS.BATCH_APPROVE,
+        PERMISSION_ACTIONS.BATCH_REJECT,
+        PERMISSION_ACTIONS.BATCH_RETRY,
+        PERMISSION_ACTIONS.BATCH_REVOKE,
+        PERMISSION_ACTIONS.BATCH_EXPORT,
+        PERMISSION_ACTIONS.EXPORT_AUDIT,
+        PERMISSION_ACTIONS.EXPORT_BATCHES,
+        PERMISSION_ACTIONS.CONFLICT_RESOLVE,
+        PERMISSION_ACTIONS.CONFLICT_UNDO
+    ]
+};
+
+class PermissionGate {
+    constructor() {
+        this.denials = [];
+    }
+
+    async checkPermission(action, batchId = null) {
+        const userRole = CURRENT_USER.role;
+        const allowedActions = PERMISSION_MATRIX[userRole] || [];
+        const hasPermission = allowedActions.includes(action);
+
+        if (!hasPermission) {
+            await this.recordDenial(action, batchId);
+        }
+
+        return hasPermission;
+    }
+
+    async requirePermission(action, batchId = null) {
+        const hasPermission = await this.checkPermission(action, batchId);
+        if (!hasPermission) {
+            const actionLabel = this.getActionLabel(action);
+            throw new Error(`权限不足：${CURRENT_USER.name} 无权执行「${actionLabel}」操作`);
+        }
+        return true;
+    }
+
+    getActionLabel(action) {
+        const labels = {
+            [PERMISSION_ACTIONS.BATCH_VIEW]: '查看批次',
+            [PERMISSION_ACTIONS.DISTRIBUTION_VIEW]: '查看发放记录',
+            [PERMISSION_ACTIONS.CONFLICT_VIEW]: '查看冲突',
+            [PERMISSION_ACTIONS.EXPORT_PREVIEW]: '导出预览',
+            [PERMISSION_ACTIONS.BATCH_APPROVE]: '批量通过',
+            [PERMISSION_ACTIONS.BATCH_REJECT]: '批量驳回',
+            [PERMISSION_ACTIONS.BATCH_RETRY]: '重试失败项',
+            [PERMISSION_ACTIONS.BATCH_REVOKE]: '撤销批次',
+            [PERMISSION_ACTIONS.BATCH_EXPORT]: '导出批次详情',
+            [PERMISSION_ACTIONS.EXPORT_AUDIT]: '导出审计日志',
+            [PERMISSION_ACTIONS.EXPORT_BATCHES]: '导出批次列表',
+            [PERMISSION_ACTIONS.CONFLICT_RESOLVE]: '复核冲突',
+            [PERMISSION_ACTIONS.CONFLICT_UNDO]: '撤销处理'
+        };
+        return labels[action] || action;
+    }
+
+    async recordDenial(action, batchId = null) {
+        const denial = {
+            id: generateId('denial'),
+            action,
+            actionLabel: this.getActionLabel(action),
+            userId: CURRENT_USER.id,
+            userName: CURRENT_USER.name,
+            userRole: CURRENT_USER.role,
+            batchId,
+            timestamp: Date.now(),
+            userAgent: navigator.userAgent,
+            ip: '127.0.0.1'
+        };
+
+        await db.put(STORES.PERMISSION_DENIALS, denial);
+        this.denials.push(denial);
+
+        await addAuditLog('permission_denied', {
+            action,
+            batchId,
+            reason: '角色权限不足'
+        });
+
+        return denial;
+    }
+
+    async getDenials(filters = {}) {
+        let denials = await db.getAll(STORES.PERMISSION_DENIALS, 'timestamp');
+        denials.sort((a, b) => b.timestamp - a.timestamp);
+
+        if (filters.userId) {
+            denials = denials.filter(d => d.userId === filters.userId);
+        }
+        if (filters.action) {
+            denials = denials.filter(d => d.action === filters.action);
+        }
+        if (filters.batchId) {
+            denials = denials.filter(d => d.batchId === filters.batchId);
+        }
+
+        return denials;
+    }
+
+    async signOperation(action, batchId, details = {}) {
+        await this.requirePermission(action, batchId);
+
+        const signature = {
+            signedAt: Date.now(),
+            signedBy: CURRENT_USER.id,
+            signedByName: CURRENT_USER.name,
+            signedByRole: CURRENT_USER.role,
+            action,
+            batchId,
+            details
+        };
+
+        await addAuditLog('operation_signed', {
+            action,
+            batchId,
+            signature,
+            details
+        });
+
+        return signature;
+    }
+}
+
+const permissionGate = new PermissionGate();
+
+class SessionCardEngine {
+    constructor() {
+        this.activeCard = null;
+        this.onCardCreated = null;
+        this.onCardRestored = null;
+    }
+
+    async createCard(batchId, sourceView, filters = {}, scrollPosition = 0) {
+        await this.cancelActiveCard();
+
+        const card = {
+            id: generateId('session'),
+            batchId,
+            userId: CURRENT_USER.id,
+            userName: CURRENT_USER.name,
+            sourceView,
+            filters: JSON.parse(JSON.stringify(filters)),
+            scrollPosition,
+            status: SESSION_CARD_STATUS.ACTIVE,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            lastActivity: Date.now(),
+            pageHistory: [sourceView]
+        };
+
+        await db.put(STORES.SESSION_CARDS, card);
+        this.activeCard = card;
+
+        await addAuditLog('session_card_created', {
+            sessionCardId: card.id,
+            batchId,
+            sourceView,
+            filters
+        });
+
+        if (this.onCardCreated) {
+            this.onCardCreated(card);
+        }
+
+        return card;
+    }
+
+    async updateCard(cardId, updates = {}) {
+        const card = await db.get(STORES.SESSION_CARDS, cardId);
+        if (!card) return null;
+
+        Object.assign(card, updates, {
+            updatedAt: Date.now(),
+            lastActivity: Date.now()
+        });
+
+        await db.put(STORES.SESSION_CARDS, card);
+
+        if (this.activeCard && this.activeCard.id === cardId) {
+            this.activeCard = card;
+        }
+
+        return card;
+    }
+
+    async getActiveCard() {
+        if (this.activeCard && this.activeCard.status === SESSION_CARD_STATUS.ACTIVE) {
+            return this.activeCard;
+        }
+
+        const activeCards = await db.getAll(
+            STORES.SESSION_CARDS,
+            'status',
+            IDBKeyRange.only(SESSION_CARD_STATUS.ACTIVE)
+        );
+
+        const userActiveCards = activeCards
+            .filter(c => c.userId === CURRENT_USER.id)
+            .sort((a, b) => b.createdAt - a.timestamp);
+
+        if (userActiveCards.length > 0) {
+            this.activeCard = userActiveCards[0];
+            return this.activeCard;
+        }
+
+        return null;
+    }
+
+    async getCard(cardId) {
+        return await db.get(STORES.SESSION_CARDS, cardId);
+    }
+
+    async restoreCard(cardId) {
+        const card = await db.get(STORES.SESSION_CARDS, cardId);
+        if (!card) {
+            throw new Error('会话卡不存在');
+        }
+
+        if (card.status !== SESSION_CARD_STATUS.ACTIVE) {
+            throw new Error('会话卡已失效');
+        }
+
+        card.lastActivity = Date.now();
+        card.updatedAt = Date.now();
+        await db.put(STORES.SESSION_CARDS, card);
+
+        this.activeCard = card;
+
+        await addAuditLog('session_card_restored', {
+            sessionCardId: cardId,
+            batchId: card.batchId,
+            sourceView: card.sourceView
+        });
+
+        if (this.onCardRestored) {
+            this.onCardRestored(card);
+        }
+
+        return card;
+    }
+
+    async completeCard(cardId) {
+        const card = await db.get(STORES.SESSION_CARDS, cardId);
+        if (!card) return null;
+
+        card.status = SESSION_CARD_STATUS.COMPLETED;
+        card.completedAt = Date.now();
+        card.updatedAt = Date.now();
+
+        await db.put(STORES.SESSION_CARDS, card);
+
+        if (this.activeCard && this.activeCard.id === cardId) {
+            this.activeCard = null;
+        }
+
+        await addAuditLog('session_card_completed', {
+            sessionCardId: cardId,
+            batchId: card.batchId
+        });
+
+        return card;
+    }
+
+    async cancelCard(cardId) {
+        const card = await db.get(STORES.SESSION_CARDS, cardId);
+        if (!card) return null;
+
+        card.status = SESSION_CARD_STATUS.CANCELLED;
+        card.cancelledAt = Date.now();
+        card.updatedAt = Date.now();
+
+        await db.put(STORES.SESSION_CARDS, card);
+
+        if (this.activeCard && this.activeCard.id === cardId) {
+            this.activeCard = null;
+        }
+
+        await addAuditLog('session_card_cancelled', {
+            sessionCardId: cardId,
+            batchId: card.batchId
+        });
+
+        return card;
+    }
+
+    async cancelActiveCard() {
+        if (this.activeCard && this.activeCard.status === SESSION_CARD_STATUS.ACTIVE) {
+            return await this.cancelCard(this.activeCard.id);
+        }
+        return null;
+    }
+
+    async getUserCards(userId = CURRENT_USER.id, filters = {}) {
+        let cards = await db.getAll(STORES.SESSION_CARDS, 'userId', IDBKeyRange.only(userId));
+        cards.sort((a, b) => b.createdAt - a.createdAt);
+
+        if (filters.status) {
+            cards = cards.filter(c => c.status === filters.status);
+        }
+        if (filters.batchId) {
+            cards = cards.filter(c => c.batchId === filters.batchId);
+        }
+        if (filters.sourceView) {
+            cards = cards.filter(c => c.sourceView === filters.sourceView);
+        }
+
+        return cards;
+    }
+
+    async getBatchCards(batchId) {
+        return await db.getAll(STORES.SESSION_CARDS, 'batchId', IDBKeyRange.only(batchId));
+    }
+
+    async navigateWithCard(cardId, targetView) {
+        const card = await this.getCard(cardId);
+        if (!card) return null;
+
+        if (!card.pageHistory) card.pageHistory = [];
+        card.pageHistory.push(targetView);
+        card.lastActivity = Date.now();
+
+        await db.put(STORES.SESSION_CARDS, card);
+        this.activeCard = card;
+
+        return card;
+    }
+
+    async goBackWithCard(cardId) {
+        const card = await this.getCard(cardId);
+        if (!card || !card.pageHistory || card.pageHistory.length < 2) {
+            return null;
+        }
+
+        card.pageHistory.pop();
+        const previousView = card.pageHistory[card.pageHistory.length - 1];
+        card.lastActivity = Date.now();
+
+        await db.put(STORES.SESSION_CARDS, card);
+        this.activeCard = card;
+
+        return { card, previousView };
+    }
+
+    async cleanupExpiredCards(maxAgeMs = 24 * 60 * 60 * 1000) {
+        const allCards = await db.getAll(STORES.SESSION_CARDS);
+        const now = Date.now();
+        let cleanedCount = 0;
+
+        for (const card of allCards) {
+            if (card.status === SESSION_CARD_STATUS.ACTIVE && 
+                now - card.lastActivity > maxAgeMs) {
+                card.status = SESSION_CARD_STATUS.CANCELLED;
+                card.cancelledAt = now;
+                card.cancelledReason = 'expired';
+                await db.put(STORES.SESSION_CARDS, card);
+                cleanedCount++;
+            }
+        }
+
+        return cleanedCount;
+    }
+}
+
+const sessionCardEngine = new SessionCardEngine();
+
+class ExportRecordEngine {
+    async recordExport(type, format, batchId = null, filename = null) {
+        const record = {
+            id: generateId('export'),
+            type,
+            format,
+            batchId,
+            filename,
+            userId: CURRENT_USER.id,
+            userName: CURRENT_USER.name,
+            userRole: CURRENT_USER.role,
+            timestamp: Date.now(),
+            status: 'completed'
+        };
+
+        await db.put(STORES.EXPORT_RECORDS, record);
+
+        await addAuditLog('export_recorded', {
+            exportId: record.id,
+            type,
+            format,
+            batchId,
+            filename
+        });
+
+        return record;
+    }
+
+    async getExportRecords(filters = {}) {
+        let records = await db.getAll(STORES.EXPORT_RECORDS, 'timestamp');
+        records.sort((a, b) => b.timestamp - a.timestamp);
+
+        if (filters.userId) {
+            records = records.filter(r => r.userId === filters.userId);
+        }
+        if (filters.batchId) {
+            records = records.filter(r => r.batchId === filters.batchId);
+        }
+        if (filters.type) {
+            records = records.filter(r => r.type === filters.type);
+        }
+
+        return records;
+    }
+}
+
+const exportRecordEngine = new ExportRecordEngine();

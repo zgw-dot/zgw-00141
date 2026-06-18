@@ -1176,11 +1176,42 @@ async function confirmImport() {
 
     try {
         const fileHash = currentFileContent ? await batchEngine.generateFileHash(currentFileContent) : null;
+        
+        let parentBatchId = null;
+        let isReimport = false;
+        let batchFileName = currentFileName || '未命名导入';
+        
+        if (fileHash) {
+            const allBatches = await db.getAll(STORES.BATCHES, 'fileHash', IDBKeyRange.only(fileHash));
+            const revokedBatches = allBatches.filter(b => b.status === BATCH_STATUS.REVOKED);
+            
+            if (revokedBatches.length > 0) {
+                const lastRevoked = revokedBatches.sort((a, b) => b.timestamp - a.timestamp)[0];
+                const reimportChoice = confirm(
+                    `检测到该文件曾被导入并撤销\n\n` +
+                    `上次导入: ${formatDate(lastRevoked.timestamp)}\n` +
+                    `操作人: ${lastRevoked.createdByName}\n` +
+                    `版本: v${lastRevoked.importVersion || 1}\n\n` +
+                    `是否作为「重导」创建新版本？\n\n` +
+                    `确定 = 创建新版本(状态隔离)\n` +
+                    `取消 = 作为全新批次导入`
+                );
+                
+                if (reimportChoice) {
+                    parentBatchId = lastRevoked.id;
+                    isReimport = true;
+                    batchFileName = `${currentFileName} (重导v${(lastRevoked.importVersion || 1) + 1})`;
+                }
+            }
+        }
+        
         const batch = await batchEngine.createBatch(
             importSource,
-            currentFileName || '未命名导入',
+            batchFileName,
             fileHash,
-            currentValidatedRecords.length
+            currentValidatedRecords.length,
+            parentBatchId,
+            isReimport
         );
         currentBatchId = batch.id;
 
@@ -1566,17 +1597,39 @@ async function renderBatchList() {
 }
 
 async function navigateToBatch(batchId) {
+    let filters = {};
+    let scrollPosition = window.scrollY || document.documentElement.scrollTop;
+
     if (currentView === 'batches') {
+        filters = { ...batchFilters };
         previousViewState.batchFilters = { ...batchFilters };
-        previousViewState.scrollPosition = window.scrollY || document.documentElement.scrollTop;
+        previousViewState.scrollPosition = scrollPosition;
     } else if (currentView === 'history') {
-        previousViewState.historyFilters = {
+        filters = {
             status: document.getElementById('filter-status')?.value || 'all',
             supply: document.getElementById('filter-supply')?.value || 'all',
-            batch: document.getElementById('filter-batch')?.value || 'all'
+            batch: document.getElementById('filter-batch')?.value || 'all',
+            viewType: 'history'
         };
-        previousViewState.scrollPosition = window.scrollY || document.documentElement.scrollTop;
+        previousViewState.historyFilters = { ...filters };
+        previousViewState.scrollPosition = scrollPosition;
+    } else if (currentView === 'dashboard') {
+        filters = {
+            viewType: 'dashboard',
+            alertClick: true
+        };
+    } else if (currentView === 'conflicts') {
+        filters = {
+            viewType: 'conflicts'
+        };
     }
+
+    const sessionCard = await sessionCardEngine.createCard(
+        batchId,
+        currentView,
+        filters,
+        scrollPosition
+    );
 
     selectedBatchIdForDetail = batchId;
     
@@ -1596,7 +1649,7 @@ async function navigateToBatch(batchId) {
         const batchList = document.getElementById('batch-list');
         if (batchList && batchList.children.length > 0) {
             setTimeout(() => {
-                openBatchDetailModal(batchId);
+                openBatchDetailModal(batchId, sessionCard.id);
                 if (previousViewState.scrollPosition > 0) {
                     window.scrollTo(0, previousViewState.scrollPosition);
                 }
@@ -1608,25 +1661,66 @@ async function navigateToBatch(batchId) {
     tryOpenModal();
 }
 
-async function navigateBackFromBatch() {
-    if (previousViewState.batchFilters) {
+async function navigateBackFromBatch(sessionCardId = null) {
+    let sourceView = null;
+    let filters = null;
+    let scrollPosition = 0;
+
+    if (sessionCardId) {
+        const card = await sessionCardEngine.getCard(sessionCardId);
+        if (card) {
+            sourceView = card.sourceView;
+            filters = card.filters;
+            scrollPosition = card.scrollPosition;
+            await sessionCardEngine.completeCard(sessionCardId);
+        }
+    }
+
+    if (!sourceView && previousViewState.batchFilters) {
         batchFilters = { ...previousViewState.batchFilters };
         previousViewState.batchFilters = null;
+    } else if (filters && filters.viewType !== 'dashboard') {
+        if (filters.viewType === 'history' || sourceView === 'history') {
+            batchFilters = { status: 'all', source: 'all', startDate: '', endDate: '' };
+            if (filters.status) document.getElementById('filter-status').value = filters.status;
+            if (filters.supply) document.getElementById('filter-supply').value = filters.supply;
+            if (filters.batch) document.getElementById('filter-batch').value = filters.batch;
+        } else {
+            batchFilters = filters || { status: 'all', source: 'all', startDate: '', endDate: '' };
+        }
     }
-    if (previousViewState.scrollPosition > 0) {
+
+    const targetScroll = scrollPosition || previousViewState.scrollPosition;
+    if (targetScroll > 0) {
         setTimeout(() => {
-            window.scrollTo(0, previousViewState.scrollPosition);
+            window.scrollTo(0, targetScroll);
             previousViewState.scrollPosition = 0;
         }, 50);
     }
 }
 
-async function openBatchDetailModal(batchId) {
+let currentSessionCardId = null;
+
+async function openBatchDetailModal(batchId, sessionCardId = null) {
     selectedBatchIdForDetail = batchId;
+    currentSessionCardId = sessionCardId;
+    
     const batch = await batchEngine.getBatch(batchId);
     if (!batch) {
         showToast('批次不存在');
         return;
+    }
+
+    if (sessionCardId) {
+        await sessionCardEngine.updateCard(sessionCardId, {
+            lastView: 'batch_detail',
+            lastActivity: Date.now()
+        });
+    } else {
+        const activeCard = await sessionCardEngine.getActiveCard();
+        if (activeCard && activeCard.batchId === batchId) {
+            currentSessionCardId = activeCard.id;
+        }
     }
 
     const pendingConflicts = await batchEngine.getBatchPendingConflicts(batchId);
@@ -1745,7 +1839,58 @@ async function openBatchDetailModal(batchId) {
 
     const lastOperationText = formatLastOperation(batch.lastOperation);
     
+    let sessionCardHtml = '';
+    let sourceViewLabel = '';
+    if (currentSessionCardId) {
+        const card = await sessionCardEngine.getCard(currentSessionCardId);
+        if (card) {
+            const sourceViewLabels = {
+                'dashboard': '首页提醒',
+                'conflicts': '复核页',
+                'history': '记录页',
+                'batches': '导入中心'
+            };
+            sourceViewLabel = sourceViewLabels[card.sourceView] || card.sourceView;
+            
+            sessionCardHtml = `
+            <div class="conflict-detail-section" style="background: linear-gradient(135deg, rgba(37, 99, 235, 0.05), rgba(6, 182, 212, 0.05); border: 1px solid rgba(37, 99, 235, 0.2); border-radius: 8px;">
+                <div class="conflict-detail-title" style="color: var(--primary);">
+                    🔄 复查接力台
+                </div>
+                <div class="data-row">
+                    <span class="data-row-label">会话卡号</span>
+                    <span class="data-row-value" style="font-family: monospace; font-size: 12px;">${currentSessionCardId.slice(-12)}</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-row-label">来源页面</span>
+                    <span class="data-row-value">${sourceViewLabel}</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-row-label">创建时间</span>
+                    <span class="data-row-value">${formatDate(card.createdAt)}</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-row-label">滚动位置</span>
+                    <span class="data-row-value">${card.scrollPosition}px</span>
+                </div>
+                ${card.filters && Object.keys(card.filters).length > 0 ? `
+                <div class="data-row">
+                    <span class="data-row-label">筛选条件</span>
+                    <span class="data-row-value" style="font-size: 12px; color: var(--text-secondary);">
+                        ${JSON.stringify(card.filters).replace(/[{}"]/g, '')}
+                    </span>
+                </div>
+                ` : ''}
+                <div style="margin-top: 12px; padding: 8px; background: rgba(37, 99, 235, 0.1); border-radius: 6px; font-size: 12px; color: var(--primary);">
+                    ✨ 关闭后将自动回到 ${sourceViewLabel} 的原列表位置
+                </div>
+            </div>
+            `;
+        }
+    }
+    
     bodyEl.innerHTML = `
+        ${sessionCardHtml}
         <div class="conflict-detail-section">
             <div class="data-row">
                 <span class="data-row-label">文件名称</span>
@@ -1868,18 +2013,22 @@ function toggleBatchRecords() {
     }
 }
 
-function closeBatchDetailModal() {
+async function closeBatchDetailModal() {
     document.getElementById('batch-detail-modal').style.display = 'none';
+    const cardIdToUse = currentSessionCardId;
     selectedBatchIdForDetail = null;
-    navigateBackFromBatch();
+    currentSessionCardId = null;
+    
+    await navigateBackFromBatch(cardIdToUse);
     if (currentView === 'batches') {
         refreshBatchesView();
     }
 }
 
 async function batchApproveAll(batchId) {
-    if (CURRENT_USER.role !== ROLES.ADMIN) {
-        showToast('只有管理员可以执行此操作');
+    const hasPermission = await permissionGate.checkPermission(PERMISSION_ACTIONS.BATCH_APPROVE, batchId);
+    if (!hasPermission) {
+        showToast('只有管理员可以执行「批量通过」操作');
         return;
     }
     if (!confirm('确定要批量通过该批次的所有待处理冲突吗？')) return;
@@ -1899,8 +2048,9 @@ async function batchApproveAll(batchId) {
 }
 
 async function batchRejectAll(batchId) {
-    if (CURRENT_USER.role !== ROLES.ADMIN) {
-        showToast('只有管理员可以执行此操作');
+    const hasPermission = await permissionGate.checkPermission(PERMISSION_ACTIONS.BATCH_REJECT, batchId);
+    if (!hasPermission) {
+        showToast('只有管理员可以执行「批量驳回」操作');
         return;
     }
     if (!confirm('确定要批量驳回该批次的所有待处理冲突吗？')) return;
@@ -1920,8 +2070,9 @@ async function batchRejectAll(batchId) {
 }
 
 async function batchRetryFailed(batchId) {
-    if (CURRENT_USER.role !== ROLES.ADMIN) {
-        showToast('只有管理员可以执行此操作');
+    const hasPermission = await permissionGate.checkPermission(PERMISSION_ACTIONS.BATCH_RETRY, batchId);
+    if (!hasPermission) {
+        showToast('只有管理员可以执行「重试失败项」操作');
         return;
     }
     if (!confirm('确定要重试该批次的所有失败项吗？')) return;
@@ -1940,8 +2091,9 @@ async function batchRetryFailed(batchId) {
 }
 
 async function batchRevoke(batchId) {
-    if (CURRENT_USER.role !== ROLES.ADMIN) {
-        showToast('只有管理员可以执行此操作');
+    const hasPermission = await permissionGate.checkPermission(PERMISSION_ACTIONS.BATCH_REVOKE, batchId);
+    if (!hasPermission) {
+        showToast('只有管理员可以执行「撤销批次」操作');
         return;
     }
     if (!confirm('确定要撤销该批次吗？撤销后已同步的记录将回滚库存，且无法恢复。')) return;
@@ -1994,7 +2146,8 @@ window.exportBatchCSV = exportBatchCSV;
 window.exportBatchJSON = exportBatchJSON;
 
 async function exportBatchCSV(batchId) {
-    if (CURRENT_USER.role !== ROLES.ADMIN) {
+    const hasPermission = await permissionGate.checkPermission(PERMISSION_ACTIONS.BATCH_EXPORT, batchId);
+    if (!hasPermission) {
         showToast('只有管理员可以导出批次详情');
         return;
     }
@@ -2008,7 +2161,8 @@ async function exportBatchCSV(batchId) {
 }
 
 async function exportBatchJSON(batchId) {
-    if (CURRENT_USER.role !== ROLES.ADMIN) {
+    const hasPermission = await permissionGate.checkPermission(PERMISSION_ACTIONS.BATCH_EXPORT, batchId);
+    if (!hasPermission) {
         showToast('只有管理员可以导出批次详情');
         return;
     }

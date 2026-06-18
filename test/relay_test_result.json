@@ -1,0 +1,348 @@
+{
+  "summary": {
+    "total": 56,
+    "passed": 56,
+    "failed": 0,
+    "passRate": "100.0",
+    "duration": "2.89",
+    "timestamp": "2026-06-18T05:45:58.752Z"
+  },
+  "details": [
+    {
+      "name": "会话卡引擎存在",
+      "success": true,
+      "details": "",
+      "timestamp": 1781761554923
+    },
+    {
+      "name": "权限闸门引擎存在",
+      "success": true,
+      "details": "",
+      "timestamp": 1781761554939
+    },
+    {
+      "name": "导出记录引擎存在",
+      "success": true,
+      "details": "",
+      "timestamp": 1781761554953
+    },
+    {
+      "name": "新增存储存在",
+      "success": true,
+      "details": "",
+      "timestamp": 1781761554957
+    },
+    {
+      "name": "创建测试批次",
+      "success": true,
+      "details": "批次ID: 72_2ziajk0oq",
+      "timestamp": 1781761554974
+    },
+    {
+      "name": "批次记录数正确",
+      "success": true,
+      "details": "总数: 4",
+      "timestamp": 1781761554974
+    },
+    {
+      "name": "批次有状态版本",
+      "success": true,
+      "details": "版本: 1781761554972",
+      "timestamp": 1781761554975
+    },
+    {
+      "name": "创建会话卡成功",
+      "success": true,
+      "details": "卡号: 76_h9l5zt17x",
+      "timestamp": 1781761555050
+    },
+    {
+      "name": "记录来源页面",
+      "success": true,
+      "details": "来源: dashboard",
+      "timestamp": 1781761555130
+    },
+    {
+      "name": "记录滚动位置",
+      "success": true,
+      "details": "位置: 100",
+      "timestamp": 1781761555155
+    },
+    {
+      "name": "记录筛选条件",
+      "success": true,
+      "details": "筛选: {\"dateRange\":\"7days\"}",
+      "timestamp": 1781761555205
+    },
+    {
+      "name": "会话卡状态活跃",
+      "success": true,
+      "details": "状态: active",
+      "timestamp": 1781761555249
+    },
+    {
+      "name": "志愿者-批量通过被拦截",
+      "success": true,
+      "details": "权限: 拒绝",
+      "timestamp": 1781761555290
+    },
+    {
+      "name": "志愿者-批量驳回被拦截",
+      "success": true,
+      "details": "权限: 拒绝",
+      "timestamp": 1781761555298
+    },
+    {
+      "name": "志愿者-重试失败被拦截",
+      "success": true,
+      "details": "权限: 拒绝",
+      "timestamp": 1781761555301
+    },
+    {
+      "name": "志愿者-撤销批次被拦截",
+      "success": true,
+      "details": "权限: 拒绝",
+      "timestamp": 1781761555318
+    },
+    {
+      "name": "志愿者-正式导出被拦截",
+      "success": true,
+      "details": "权限: 拒绝",
+      "timestamp": 1781761555372
+    },
+    {
+      "name": "志愿者-允许查看结果",
+      "success": true,
+      "details": "权限: 允许",
+      "timestamp": 1781761555500
+    },
+    {
+      "name": "志愿者-允许导出预览",
+      "success": true,
+      "details": "权限: 允许",
+      "timestamp": 1781761555563
+    },
+    {
+      "name": "越权抛出异常",
+      "success": true,
+      "details": "权限不足：志愿者小王 无权执行「批量通过」操作",
+      "timestamp": 1781761555591
+    },
+    {
+      "name": "权限拒绝记录落盘",
+      "success": true,
+      "details": "拒绝记录: 1 条",
+      "timestamp": 1781761555637
+    },
+    {
+      "name": "生成操作签名",
+      "success": true,
+      "details": "签名ID: 73_wjaxsl6b1",
+      "timestamp": 1781761555685
+    },
+    {
+      "name": "签名包含操作人",
+      "success": true,
+      "details": "操作人: 系统管理员",
+      "timestamp": 1781761555692
+    },
+    {
+      "name": "签名包含角色",
+      "success": true,
+      "details": "角色: admin",
+      "timestamp": 1781761555697
+    },
+    {
+      "name": "签名包含操作详情",
+      "success": true,
+      "details": "详情: {\"count\":10,\"note\":\"测试签名\"}",
+      "timestamp": 1781761555700
+    },
+    {
+      "name": "签名记录落盘",
+      "success": true,
+      "details": "签名ID匹配: 73_wjaxsl6b1",
+      "timestamp": 1781761555753
+    },
+    {
+      "name": "会话卡完成状态",
+      "success": true,
+      "details": "状态: completed",
+      "timestamp": 1781761555848
+    },
+    {
+      "name": "回位导航执行成功",
+      "success": true,
+      "details": "目标视图: dashboard",
+      "timestamp": 1781761555940
+    },
+    {
+      "name": "回位到原来源页面",
+      "success": true,
+      "details": "目标: dashboard",
+      "timestamp": 1781761555986
+    },
+    {
+      "name": "滚动位置恢复",
+      "success": true,
+      "details": "恢复位置: 100",
+      "timestamp": 1781761556007
+    },
+    {
+      "name": "批次撤销成功",
+      "success": true,
+      "details": "状态: revoked",
+      "timestamp": 1781761556073
+    },
+    {
+      "name": "状态版本递增",
+      "success": true,
+      "details": "原版本: 1781761556035, 新版本: 1781761556059",
+      "timestamp": 1781761556084
+    },
+    {
+      "name": "撤销记录数正确",
+      "success": true,
+      "details": "撤销数: 2",
+      "timestamp": 1781761556084
+    },
+    {
+      "name": "重复撤销被拦截",
+      "success": true,
+      "details": "拦截信息: 批次已撤销，请勿重复操作",
+      "timestamp": 1781761556101
+    },
+    {
+      "name": "已撤销批次批量通过被拦截",
+      "success": true,
+      "details": "拦截信息: 批次已撤销，无法执行批量通过",
+      "timestamp": 1781761556165
+    },
+    {
+      "name": "撤销后会话卡已取消",
+      "success": true,
+      "details": "活跃卡: 0, 总数: 1",
+      "timestamp": 1781761556199
+    },
+    {
+      "name": "重开批次创建成功",
+      "success": true,
+      "details": "新批次ID: 99_g5r171p3t",
+      "timestamp": 1781761556207
+    },
+    {
+      "name": "重开批次版本独立",
+      "success": true,
+      "details": "版本: v1",
+      "timestamp": 1781761556232
+    },
+    {
+      "name": "父批次关联正确",
+      "success": true,
+      "details": "父批次: 72_2ziajk0oq",
+      "timestamp": 1781761556251
+    },
+    {
+      "name": "重开标记正确",
+      "success": true,
+      "details": "isReimport: true",
+      "timestamp": 1781761556257
+    },
+    {
+      "name": "批次状态独立不串",
+      "success": true,
+      "details": "批次1: revoked, 批次2: processing",
+      "timestamp": 1781761556276
+    },
+    {
+      "name": "版本历史可追溯",
+      "success": true,
+      "details": "历史长度: 2",
+      "timestamp": 1781761556398
+    },
+    {
+      "name": "导出记录落盘",
+      "success": true,
+      "details": "新增导出记录: 1",
+      "timestamp": 1781761556574
+    },
+    {
+      "name": "导出记录关联批次",
+      "success": true,
+      "details": "批次ID: 72_2ziajk0oq",
+      "timestamp": 1781761556605
+    },
+    {
+      "name": "导出记录包含操作人",
+      "success": true,
+      "details": "操作人: 系统管理员",
+      "timestamp": 1781761556631
+    },
+    {
+      "name": "导出记录包含文件名",
+      "success": true,
+      "details": "文件名: 批次详情_ziajk0oq_20240101.csv",
+      "timestamp": 1781761556648
+    },
+    {
+      "name": "会话卡持久化存储",
+      "success": true,
+      "details": "卡号: 54_j2jhpv4d1",
+      "timestamp": 1781761556658
+    },
+    {
+      "name": "可查询活跃会话卡",
+      "success": true,
+      "details": "活跃卡ID: 54_j2jhpv4d1",
+      "timestamp": 1781761556688
+    },
+    {
+      "name": "会话卡可恢复",
+      "success": true,
+      "details": "恢复后状态: restoring",
+      "timestamp": 1781761556712
+    },
+    {
+      "name": "会话卡可取消",
+      "success": true,
+      "details": "取消后状态: cancelled",
+      "timestamp": 1781761556724
+    },
+    {
+      "name": "过期卡片清理执行",
+      "success": true,
+      "details": "清理数量: 1",
+      "timestamp": 1781761556750
+    },
+    {
+      "name": "过期卡片已失效",
+      "success": true,
+      "details": "状态: cancelled",
+      "timestamp": 1781761556782
+    },
+    {
+      "name": "会话卡存储正常",
+      "success": true,
+      "details": "记录数: 3",
+      "timestamp": 1781761556953
+    },
+    {
+      "name": "权限拒绝存储正常",
+      "success": true,
+      "details": "记录数: 6",
+      "timestamp": 1781761557248
+    },
+    {
+      "name": "导出记录存储正常",
+      "success": true,
+      "details": "记录数: 1",
+      "timestamp": 1781761557538
+    },
+    {
+      "name": "所有批次有状态版本",
+      "success": true,
+      "details": "有版本: 2/2",
+      "timestamp": 1781761557654
+    }
+  ]
+}

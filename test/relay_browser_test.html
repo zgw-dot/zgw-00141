@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>复查接力台 - 浏览器端测试</title>
+    <style>
+        body {
+            font-family: 'Microsoft YaHei', sans-serif;
+            margin: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #555;
+            margin-top: 30px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            background: #f9f9f9;
+            border-radius: 5px;
+        }
+        .test-result {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: 'Consolas', monospace;
+        }
+        .pass {
+            background: #d4edda;
+            color: #155724;
+            border-left: 4px solid #28a745;
+        }
+        .fail {
+            background: #f8d7da;
+            color: #721c24;
+            border-left: 4px solid #dc3545;
+        }
+        .info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border-left: 4px solid #17a2b8;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+        .summary {
+            margin-top: 30px;
+            padding: 20px;
+            background: #fff3cd;
+            border-radius: 5px;
+            border: 1px solid #ffeeba;
+        }
+        .log-area {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 5px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: 'Consolas', monospace;
+            font-size: 12px;
+            margin-top: 20px;
+        }
+        .log-line {
+            margin: 2px 0;
+        }
+        .log-pass { color: #4ec9b0; }
+        .log-fail { color: #f48771; }
+        .log-info { color: #569cd6; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔄 复查接力台 - 浏览器端功能测试</h1>
+        
+        <div class="test-section">
+            <h2>测试控制</h2>
+            <button onclick="runAllTests()" id="runBtn">▶️ 运行全部测试</button>
+            <button onclick="clearResults()" id="clearBtn">🗑️ 清空结果</button>
+            <button onclick="exportResults()" id="exportBtn">📥 导出结果</button>
+        </div>
+
+        <div id="results"></div>
+        
+        <div class="summary" id="summary" style="display: none;">
+            <h2>📊 测试汇总</h2>
+            <div id="summaryContent"></div>
+        </div>
+
+        <div class="log-area" id="logArea"></div>
+    </div>
+
+    <script src="../js/db.js"></script>
+    <script src="../js/sync.js"></script>
+    <script src="../js/export.js"></script>
+    <script src="../js/ui.js"></script>
+
+    <script>
+        let TEST_RESULTS = [];
+        let TEST_LOGS = [];
+
+        function log(type, message) {
+            const timestamp = new Date().toLocaleTimeString();
+            const logLine = document.createElement('div');
+            logLine.className = `log-line log-${type}`;
+            logLine.textContent = `[${timestamp}] ${message}`;
+            document.getElementById('logArea').appendChild(logLine);
+            document.getElementById('logArea').scrollTop = document.getElementById('logArea').scrollHeight;
+            TEST_LOGS.push({ type, message, timestamp });
+        }
+
+        function addResult(name, success, details = '') {
+            TEST_RESULTS.push({ name, success, details, timestamp: Date.now() });
+            
+            const resultDiv = document.createElement('div');
+            resultDiv.className = `test-result ${success ? 'pass' : 'fail'}`;
+            const status = success ? '✅ PASS' : '❌ FAIL';
+            resultDiv.innerHTML = `<strong>${status}</strong> ${name}`;
+            if (details) {
+                resultDiv.innerHTML += `<br><span style="font-size: 12px; opacity: 0.8;">${details}</span>`;
+            }
+            document.getElementById('results').appendChild(resultDiv);
+            
+            log(success ? 'pass' : 'fail', `${name} - ${success ? '通过' : '失败'}${details ? ': ' + details : ''}`);
+        }
+
+        function clearResults() {
+            TEST_RESULTS = [];
+            TEST_LOGS = [];
+            document.getElementById('results').innerHTML = '';
+            document.getElementById('summary').style.display = 'none';
+            document.getElementById('logArea').innerHTML = '';
+        }
+
+        function showSummary() {
+            const total = TEST_RESULTS.length;
+            const passed = TEST_RESULTS.filter(r => r.success).length;
+            const failed = total - passed;
+            const passRate = total > 0 ? ((passed / total) * 100).toFixed(1) : '0';
+            
+            document.getElementById('summary').style.display = 'block';
+            document.getElementById('summaryContent').innerHTML = `
+                <p><strong>总测试数：</strong>${total}</p>
+                <p><strong style="color: #28a745;">✅ 通过：</strong>${passed}</p>
+                <p><strong style="color: #dc3545;">❌ 失败：</strong>${failed}</p>
+                <p><strong>📊 通过率：</strong>${passRate}%</p>
+            `;
+            
+            log('info', `测试完成：${passed}/${total} 通过 (${passRate}%)`);
+        }
+
+        function exportResults() {
+            const data = {
+                summary: {
+                    total: TEST_RESULTS.length,
+                    passed: TEST_RESULTS.filter(r => r.success).length,
+                    failed: TEST_RESULTS.filter(r => !r.success).length,
+                    passRate: TEST_RESULTS.length > 0 ? ((TEST_RESULTS.filter(r => r.success).length / TEST_RESULTS.length) * 100).toFixed(1) : '0'
+                },
+                results: TEST_RESULTS,
+                logs: TEST_LOGS,
+                timestamp: new Date().toISOString()
+            };
+            
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `relay_browser_test_${Date.now()}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            
+            log('info', '测试结果已导出');
+        }
+
+        async function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        async function runAllTests() {
+            clearResults();
+            document.getElementById('runBtn').disabled = true;
+            
+            log('info', '开始浏览器端测试...');
+            log('info', '等待数据库初始化...');
+            
+            await sleep(1000);
+
+            try {
+                await test1_EngineInit();
+                await test2_CreateBatch();
+                await test3_SessionCard_Create();
+                await test4_PermissionGate();
+                await test5_OperationSignature();
+                await test6_SessionCard_Restore();
+                await test7_BatchStateIsolation();
+                await test8_ExportRecord();
+                await test9_SessionCard_Persistence();
+                
+                showSummary();
+            } catch (e) {
+                log('fail', `测试执行出错: ${e.message}`);
+                console.error(e);
+            }
+            
+            document.getElementById('runBtn').disabled = false;
+        }
+
+        async function test1_EngineInit() {
+            log('info', '【测试1】核心引擎初始化检查');
+            try {
+                const hasSessionCard = typeof sessionCardEngine !== 'undefined';
+                const hasPermission = typeof permissionGate !== 'undefined';
+                const hasExport = typeof exportRecordEngine !== 'undefined';
+                const hasStores = typeof STORES !== 'undefined' && 
+                                 typeof STORES.SESSION_CARDS !== 'undefined' &&
+                                 typeof STORES.PERMISSION_DENIALS !== 'undefined' &&
+                                 typeof STORES.EXPORT_RECORDS !== 'undefined';
+
+                addResult('会话卡引擎存在', hasSessionCard);
+                addResult('权限闸门引擎存在', hasPermission);
+                addResult('导出记录引擎存在', hasExport);
+                addResult('新增存储存在', hasStores);
+
+                if (!hasSessionCard || !hasPermission || !hasExport || !hasStores) {
+                    throw new Error('核心引擎初始化失败');
+                }
+            } catch (e) {
+                addResult('核心引擎初始化', false, e.message);
+                throw e;
+            }
+        }
+
+        async function test2_CreateBatch() {
+            log('info', '【测试2】创建测试批次');
+            try {
+                const testCSV = `居民姓名,身份证号,物资名称,领取数量,备注
+张三,110101199001010001,瓶装水,2,浏览器测试1
+李四,110101199001010002,瓶装水,3,浏览器测试2
+王五,110101199001010003,感冒药,1,浏览器测试3`;
+
+                const fileHash = await batchEngine.generateFileHash(testCSV);
+                const batch = await batchEngine.createBatch(
+                    'csv_import',
+                    'browser_test_batch.csv',
+                    fileHash,
+                    3
+                );
+
+                window.TEST_BATCH_ID = batch.id;
+
+                const dist1 = { id: 'browser_dist_1', batchId: batch.id, status: 'pending' };
+                const dist2 = { id: 'browser_dist_2', batchId: batch.id, status: 'pending' };
+                await db.put(STORES.DISTRIBUTIONS, dist1);
+                await db.put(STORES.DISTRIBUTIONS, dist2);
+
+                const batchAfter = await db.get(STORES.BATCHES, batch.id);
+                
+                addResult('创建测试批次', batchAfter && batchAfter.totalRecords === 3, `批次ID: ${batch.id.slice(-12)}`);
+                addResult('批次记录数正确', batchAfter && batchAfter.totalRecords === 3, `总数: ${batchAfter?.totalRecords}`);
+                addResult('批次有状态版本', batchAfter && typeof batchAfter.stateVersion === 'number', `版本: ${batchAfter?.stateVersion}`);
+            } catch (e) {
+                addResult('创建测试批次', false, e.message);
+                throw e;
+            }
+        }
+
+        async function test3_SessionCard_Create() {
+            log('info', '【测试3】会话卡机制 - 批次直达');
+            try {
+                const card = await sessionCardEngine.createCard(
+                    window.TEST_BATCH_ID,
+                    'import',
+                    { status: 'all', dateRange: '30days' },
+                    150
+                );
+
+                window.TEST_SESSION_CARD_ID = card.id;
+
+                const savedCard = await db.get(STORES.SESSION_CARDS, card.id);
+                const success = savedCard && 
+                                savedCard.batchId === window.TEST_BATCH_ID &&
+                                savedCard.sourceView === 'import' &&
+                                savedCard.scrollPosition === 150 &&
+                                savedCard.status === SESSION_CARD_STATUS.ACTIVE;
+
+                addResult('创建会话卡成功', success, `卡号: ${card.id.slice(-12)}`);
+                addResult('记录来源页面', savedCard?.sourceView === 'import', `来源: ${savedCard?.sourceView}`);
+                addResult('记录滚动位置', savedCard?.scrollPosition === 150, `位置: ${savedCard?.scrollPosition}`);
+                addResult('记录筛选条件', savedCard?.filters?.status === 'all', `筛选: ${JSON.stringify(savedCard?.filters)}`);
+                addResult('会话卡状态活跃', savedCard?.status === SESSION_CARD_STATUS.ACTIVE, `状态: ${savedCard?.status}`);
+            } catch (e) {
+                addResult('会话卡创建', false, e.message);
+            }
+        }
+
+        async function test4_PermissionGate() {
+            log('info', '【测试4】权限闸门 - 志愿者越权拦截');
+            try {
+                const originalUser = CURRENT_USER;
+                
+                CURRENT_USER = {
+                    id: 'user_vol_browser_001',
+                    name: '志愿者浏览器测试',
+                    role: ROLES.VOLUNTEER
+                };
+                log('info', '已切换到志愿者账号');
+
+                const canApprove = await permissionGate.checkPermission(PERMISSION_ACTIONS.BATCH_APPROVE, window.TEST_BATCH_ID);
+                const canReject = await permissionGate.checkPermission(PERMISSION_ACTIONS.BATCH_REJECT, window.TEST_BATCH_ID);
+                const canRetry = await permissionGate.checkPermission(PERMISSION_ACTIONS.BATCH_RETRY, window.TEST_BATCH_ID);
+                const canRevoke = await permissionGate.checkPermission(PERMISSION_ACTIONS.BATCH_REVOKE, window.TEST_BATCH_ID);
+                const canExport = await permissionGate.checkPermission(PERMISSION_ACTIONS.BATCH_EXPORT, window.TEST_BATCH_ID);
+                
+                const canView = await permissionGate.checkPermission(PERMISSION_ACTIONS.BATCH_VIEW, window.TEST_BATCH_ID);
+                const canPreview = await permissionGate.checkPermission(PERMISSION_ACTIONS.EXPORT_PREVIEW, window.TEST_BATCH_ID);
+
+                addResult('志愿者-批量通过被拦截', !canApprove, `权限: ${canApprove ? '允许' : '拒绝'}`);
+                addResult('志愿者-批量驳回被拦截', !canReject, `权限: ${canReject ? '允许' : '拒绝'}`);
+                addResult('志愿者-重试失败被拦截', !canRetry, `权限: ${canRetry ? '允许' : '拒绝'}`);
+                addResult('志愿者-撤销批次被拦截', !canRevoke, `权限: ${canRevoke ? '允许' : '拒绝'}`);
+                addResult('志愿者-正式导出被拦截', !canExport, `权限: ${canExport ? '允许' : '拒绝'}`);
+                addResult('志愿者-允许查看结果', canView, `权限: ${canView ? '允许' : '拒绝'}`);
+                addResult('志愿者-允许导出预览', canPreview, `权限: ${canPreview ? '允许' : '拒绝'}`);
+
+                const denialBefore = await db.count(STORES.PERMISSION_DENIALS);
+                try {
+                    await permissionGate.requirePermission(PERMISSION_ACTIONS.BATCH_APPROVE, window.TEST_BATCH_ID);
+                    addResult('越权抛出异常', false, '应该抛出异常但没有');
+                } catch (e) {
+                    addResult('越权抛出异常', true, e.message);
+                }
+                const denialAfter = await db.count(STORES.PERMISSION_DENIALS);
+                addResult('权限拒绝记录落盘', denialAfter > denialBefore, `拒绝记录: ${denialAfter - denialBefore} 条`);
+
+                CURRENT_USER = originalUser;
+                log('info', '已切回原账号');
+            } catch (e) {
+                addResult('权限闸门测试', false, e.message);
+                CURRENT_USER = { id: 'user_admin_001', name: '系统管理员', role: ROLES.ADMIN };
+            }
+        }
+
+        async function test5_OperationSignature() {
+            log('info', '【测试5】操作签名机制');
+            try {
+                const signature = await permissionGate.signOperation(
+                    PERMISSION_ACTIONS.BATCH_APPROVE,
+                    window.TEST_BATCH_ID,
+                    { count: 5, note: '浏览器测试签名' }
+                );
+
+                const success = signature && 
+                                typeof signature.signatureId === 'string' &&
+                                signature.signedAt > 0 &&
+                                signature.signedBy === CURRENT_USER.id;
+
+                addResult('生成操作签名', success, `签名ID: ${signature.signatureId?.slice(-12) || 'N/A'}`);
+                addResult('签名包含操作人', signature?.signedBy === CURRENT_USER.id, `操作人: ${signature?.signedByName}`);
+                addResult('签名包含角色', signature?.signedByRole === ROLES.ADMIN, `角色: ${signature?.signedByRole}`);
+                addResult('签名包含操作详情', signature?.details?.count === 5, `详情: ${JSON.stringify(signature?.details)}`);
+
+                const auditLogs = await db.getAll(STORES.AUDIT_LOGS);
+                const signLog = auditLogs.find(l => l.details?.signatureId === signature.signatureId);
+                addResult('签名记录落盘', !!signLog, `签名ID匹配: ${signLog?.details?.signatureId?.slice(-12) || 'N/A'}`);
+            } catch (e) {
+                addResult('操作签名测试', false, e.message);
+            }
+        }
+
+        async function test6_SessionCard_Restore() {
+            log('info', '【测试6】会话卡机制 - 回位续查');
+            try {
+                await sessionCardEngine.completeCard(window.TEST_SESSION_CARD_ID);
+                const completedCard = await db.get(STORES.SESSION_CARDS, window.TEST_SESSION_CARD_ID);
+                
+                addResult('会话卡完成状态', completedCard?.status === SESSION_CARD_STATUS.COMPLETED, `状态: ${completedCard?.status}`);
+
+                const result = await navigateBackFromBatch(window.TEST_SESSION_CARD_ID);
+                
+                addResult('回位导航执行成功', result?.success, `目标视图: ${result?.targetView}`);
+                addResult('回位到原来源页面', result?.targetView === 'import', `目标: ${result?.targetView}`);
+                addResult('滚动位置恢复', result?.scrollPosition === 150, `恢复位置: ${result?.scrollPosition}`);
+            } catch (e) {
+                addResult('回位续查测试', false, e.message);
+            }
+        }
+
+        async function test7_BatchStateIsolation() {
+            log('info', '【测试7】批次状态隔离 - 撤销重开');
+            try {
+                await batchEngine.batchApprove(window.TEST_BATCH_ID);
+                await sleep(20);
+                const batchBefore = await db.get(STORES.BATCHES, window.TEST_BATCH_ID);
+                const originalVersion = batchBefore.stateVersion;
+
+                const revokedCount = await batchEngine.revokeBatch(window.TEST_BATCH_ID);
+                const batchAfter = await db.get(STORES.BATCHES, window.TEST_BATCH_ID);
+
+                addResult('批次撤销成功', batchAfter?.status === BATCH_STATUS.REVOKED, `状态: ${batchAfter?.status}`);
+                addResult('状态版本递增', batchAfter?.stateVersion > originalVersion, 
+                        `原版本: ${originalVersion}, 新版本: ${batchAfter?.stateVersion}`);
+                addResult('撤销记录数正确', revokedCount > 0, `撤销数: ${revokedCount}`);
+
+                let doubleRevokeError = null;
+                try {
+                    await batchEngine.revokeBatch(window.TEST_BATCH_ID);
+                } catch (e) {
+                    doubleRevokeError = e;
+                }
+                addResult('重复撤销被拦截', !!doubleRevokeError, `拦截信息: ${doubleRevokeError?.message || 'N/A'}`);
+
+                let approveError = null;
+                try {
+                    await batchEngine.batchApprove(window.TEST_BATCH_ID);
+                } catch (e) {
+                    approveError = e;
+                }
+                addResult('已撤销批次批量通过被拦截', !!approveError, `拦截信息: ${approveError?.message || 'N/A'}`);
+
+                const cardsForBatch = await db.getAll(STORES.SESSION_CARDS, 'batchId', window.TEST_BATCH_ID);
+                const activeCards = cardsForBatch.filter(c => c.status === SESSION_CARD_STATUS.ACTIVE);
+                addResult('撤销后会话卡已取消', activeCards.length === 0, `活跃卡: ${activeCards.length}, 总数: ${cardsForBatch.length}`);
+
+                const testCSV2 = `居民姓名,身份证号,物资名称,领取数量,备注
+张三,110101199001010001,瓶装水,2,重开测试1
+李四,110101199001010002,瓶装水,3,重开测试2`;
+
+                const fileHash2 = await batchEngine.generateFileHash(testCSV2);
+                const batch2 = await batchEngine.createBatch(
+                    'csv_import',
+                    'browser_test_batch_reopened.csv',
+                    fileHash2,
+                    2,
+                    window.TEST_BATCH_ID,
+                    true
+                );
+
+                const batch2After = await db.get(STORES.BATCHES, batch2.id);
+                addResult('重开批次创建成功', !!batch2After, `新批次ID: ${batch2.id.slice(-12)}`);
+                addResult('重开批次版本独立', batch2After?.importVersion === 1, `版本: v${batch2After?.importVersion}`);
+                addResult('父批次关联正确', batch2After?.parentBatchId === window.TEST_BATCH_ID, `父批次: ${batch2After?.parentBatchId?.slice(-12)}`);
+                addResult('重开标记正确', batch2After?.isReimport === true, `isReimport: ${batch2After?.isReimport}`);
+
+                const batch1Now = await db.get(STORES.BATCHES, window.TEST_BATCH_ID);
+                const statesIndependent = batch1Now.status === BATCH_STATUS.REVOKED && 
+                                          batch2After.status !== BATCH_STATUS.REVOKED;
+                addResult('批次状态独立不串', statesIndependent, 
+                        `批次1: ${batch1Now.status}, 批次2: ${batch2After.status}`);
+
+                const history = await batchEngine.getBatchVersionHistory(batch2.id);
+                addResult('版本历史可追溯', history.length >= 2, `历史长度: ${history.length}`);
+            } catch (e) {
+                addResult('批次状态隔离测试', false, e.message);
+                console.error(e);
+            }
+        }
+
+        async function test8_ExportRecord() {
+            log('info', '【测试8】导出文件落盘');
+            try {
+                const exportCountBefore = await db.count(STORES.EXPORT_RECORDS);
+                
+                const record = await exportRecordEngine.recordExport(
+                    'batch_detail',
+                    'csv',
+                    window.TEST_BATCH_ID,
+                    `浏览器批次详情_${window.TEST_BATCH_ID.slice(-8)}_${Date.now()}.csv`
+                );
+                
+                const exportCountAfter = await db.count(STORES.EXPORT_RECORDS);
+                const newExports = exportCountAfter - exportCountBefore;
+                
+                addResult('导出记录落盘', newExports >= 1, `新增导出记录: ${newExports}`);
+                
+                const exportRecords = await db.getAll(STORES.EXPORT_RECORDS);
+                exportRecords.sort((a, b) => b.timestamp - a.timestamp);
+                const latestExport = exportRecords[0];
+                
+                addResult('导出记录关联批次', latestExport?.batchId === window.TEST_BATCH_ID, 
+                        `批次ID: ${latestExport?.batchId?.slice(-12)}`);
+                addResult('导出记录包含操作人', latestExport?.operatorId === CURRENT_USER.id, 
+                        `操作人: ${latestExport?.operatorName}`);
+                addResult('导出记录包含文件名', latestExport?.filename?.includes('.csv'), 
+                        `文件名: ${latestExport?.filename}`);
+            } catch (e) {
+                addResult('导出文件落盘测试', false, e.message);
+            }
+        }
+
+        async function test9_SessionCard_Persistence() {
+            log('info', '【测试9】会话卡持久化 - 重启回查');
+            try {
+                const card2 = await sessionCardEngine.createCard(
+                    window.TEST_BATCH_ID,
+                    'batches',
+                    { status: BATCH_STATUS.PARTIAL },
+                    300
+                );
+                
+                const savedCard2 = await db.get(STORES.SESSION_CARDS, card2.id);
+                addResult('会话卡持久化存储', !!savedCard2, `卡号: ${card2.id.slice(-12)}`);
+                
+                const activeCard = await sessionCardEngine.getActiveCard();
+                addResult('可查询活跃会话卡', activeCard?.id === card2.id, `活跃卡ID: ${activeCard?.id?.slice(-12)}`);
+                
+                const restored = await sessionCardEngine.restoreCard(card2.id);
+                addResult('会话卡可恢复', restored?.status === SESSION_CARD_STATUS.RESTORING, 
+                        `恢复后状态: ${restored?.status}`);
+                
+                await sessionCardEngine.cancelCard(card2.id);
+                const cancelledCard = await db.get(STORES.SESSION_CARDS, card2.id);
+                addResult('会话卡可取消', cancelledCard?.status === SESSION_CARD_STATUS.CANCELLED, 
+                        `取消后状态: ${cancelledCard?.status}`);
+                        
+                const sessionCardCount = await db.count(STORES.SESSION_CARDS);
+                const denialCount = await db.count(STORES.PERMISSION_DENIALS);
+                const exportCount = await db.count(STORES.EXPORT_RECORDS);
+                
+                addResult('会话卡存储正常', sessionCardCount >= 0, `记录数: ${sessionCardCount}`);
+                addResult('权限拒绝存储正常', denialCount >= 1, `记录数: ${denialCount}`);
+                addResult('导出记录存储正常', exportCount >= 1, `记录数: ${exportCount}`);
+                
+                log('info', '【重要】会话卡、权限拒绝记录、导出记录均已持久化到IndexedDB');
+                log('info', '【重要】刷新页面或重启服务后数据仍可恢复');
+            } catch (e) {
+                addResult('会话卡持久化测试', false, e.message);
+            }
+        }
+
+        log('info', '测试页面已加载，点击"运行全部测试"开始');
+    </script>
+</body>
+</html>

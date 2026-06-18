@@ -174,7 +174,43 @@ class DataExporter {
         return JSON.stringify(data, null, 2);
     }
 
-    downloadFile(content, filename, mimeType) {
+    async saveToServer(content, filename, exportType, batchId = null) {
+        try {
+            const response = await fetch('/api/export', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json; charset=utf-8'
+                },
+                body: JSON.stringify({
+                    filename,
+                    content,
+                    type: exportType,
+                    batchId,
+                    operator: {
+                        id: CURRENT_USER.id,
+                        name: CURRENT_USER.name,
+                        role: CURRENT_USER.role
+                    }
+                })
+            });
+            
+            const result = await response.json();
+            if (result.success) {
+                console.log('[导出落盘] 服务器保存成功:', result.filepath);
+                return result;
+            } else {
+                console.warn('[导出落盘] 服务器保存失败:', result.error);
+                return null;
+            }
+        } catch (error) {
+            console.warn('[导出落盘] 无法连接服务器，仅本地下载:', error.message);
+            return null;
+        }
+    }
+
+    async downloadFile(content, filename, mimeType, exportType = 'unknown', batchId = null) {
+        await this.saveToServer(content, filename, exportType, batchId);
+        
         const blob = new Blob([content], { type: mimeType });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -187,7 +223,9 @@ class DataExporter {
 
         addAuditLog('export_data', {
             filename,
-            type: mimeType.includes('csv') ? 'csv' : 'json'
+            type: mimeType.includes('csv') ? 'csv' : 'json',
+            exportType,
+            batchId
         });
     }
 
@@ -411,53 +449,55 @@ class DataExporter {
         if (type === 'distributions') {
             content = await this.exportDistributions(format, startDate, endDate);
             filename = `领取记录_${dateStr}.${format}`;
+            await exportRecordEngine.recordExport('distributions', format, null, filename);
         } else if (type === 'audit') {
-            if (CURRENT_USER.role !== ROLES.ADMIN) {
-                throw new Error('只有管理员可以导出审计日志');
-            }
+            await permissionGate.signOperation(PERMISSION_ACTIONS.EXPORT_AUDIT, null, { type, format });
             content = await this.exportAuditLogs(format, startDate, endDate);
             filename = `审计日志_${dateStr}.${format}`;
+            await exportRecordEngine.recordExport('audit', format, null, filename);
         } else if (type === 'batches') {
-            if (CURRENT_USER.role !== ROLES.ADMIN) {
-                throw new Error('只有管理员可以导出批次列表');
-            }
+            await permissionGate.signOperation(PERMISSION_ACTIONS.EXPORT_BATCHES, null, { type, format });
             content = await this.exportBatches(format, startDate, endDate);
             filename = `批次列表_${dateStr}.${format}`;
+            await exportRecordEngine.recordExport('batches', format, null, filename);
         } else if (type === 'both') {
-            if (CURRENT_USER.role !== ROLES.ADMIN) {
-                throw new Error('只有管理员可以导出审计日志');
-            }
+            await permissionGate.signOperation(PERMISSION_ACTIONS.EXPORT_AUDIT, null, { type, format });
             const distContent = await this.exportDistributions(format, startDate, endDate);
             const auditContent = await this.exportAuditLogs(format, startDate, endDate);
             
-            this.downloadFile(distContent, `领取记录_${dateStr}.${format}`, 
-                format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8');
+            const distFilename = `领取记录_${dateStr}.${format}`;
+            this.downloadFile(distContent, distFilename, 
+                format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8',
+                'distributions', null);
+            await exportRecordEngine.recordExport('distributions', format, null, distFilename);
             
             await new Promise(resolve => setTimeout(resolve, 500));
             
-            this.downloadFile(auditContent, `审计日志_${dateStr}.${format}`,
-                format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8');
+            const auditFilename = `审计日志_${dateStr}.${format}`;
+            this.downloadFile(auditContent, auditFilename,
+                format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8',
+                'audit', null);
+            await exportRecordEngine.recordExport('audit', format, null, auditFilename);
             
-            return `领取记录_${dateStr}.${format}, 审计日志_${dateStr}.${format}`;
+            return `${distFilename}, ${auditFilename}`;
         }
 
         mimeType = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8';
         
-        this.downloadFile(content, filename, mimeType);
+        this.downloadFile(content, filename, mimeType, type, null);
         
         return filename;
     }
 
     async exportBatchAndDownload(batchId, format = 'csv') {
-        if (CURRENT_USER.role !== ROLES.ADMIN) {
-            throw new Error('只有管理员可以导出批次详情');
-        }
+        await permissionGate.signOperation(PERMISSION_ACTIONS.BATCH_EXPORT, batchId, { format });
         const content = await this.exportBatchDetail(batchId, format);
         const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
         const filename = `批次详情_${batchId.slice(-8)}_${dateStr}.${format}`;
         const mimeType = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8';
         
-        this.downloadFile(content, filename, mimeType);
+        this.downloadFile(content, filename, mimeType, 'batch_detail', batchId);
+        await exportRecordEngine.recordExport('batch_detail', format, batchId, filename);
         
         return filename;
     }
