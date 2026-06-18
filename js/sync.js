@@ -198,13 +198,14 @@ class ImportEngine {
         return validated;
     }
 
-    async processImport(validatedRecords, importSource) {
+    async processImport(validatedRecords, importSource, batchId) {
         const results = {
             success: 0,
             conflicts: 0,
             errors: 0,
             imported: [],
-            conflicted: []
+            conflicted: [],
+            batchId: batchId
         };
 
         for (const record of validatedRecords) {
@@ -224,7 +225,8 @@ class ImportEngine {
                     version: 1,
                     importSource: importSource,
                     importRow: record.rowIndex,
-                    importedAt: Date.now()
+                    importedAt: Date.now(),
+                    batchId: batchId
                 };
 
                 await db.put(STORES.DISTRIBUTIONS, distribution);
@@ -235,8 +237,13 @@ class ImportEngine {
                     rowIndex: record.rowIndex,
                     residentId: record.resident.id,
                     supplyId: record.supply.id,
-                    quantity: record.quantity
+                    quantity: record.quantity,
+                    batchId: batchId
                 });
+
+                if (batchId) {
+                    await batchEngine.addRecordToBatch(batchId, distribution.id, false);
+                }
 
                 results.success++;
                 results.imported.push(distribution);
@@ -257,7 +264,8 @@ class ImportEngine {
                     importSource: importSource,
                     importRow: record.rowIndex,
                     importedAt: Date.now(),
-                    importErrors: record.errors
+                    importErrors: record.errors,
+                    batchId: batchId
                 };
 
                 await db.put(STORES.DISTRIBUTIONS, conflictDist);
@@ -275,7 +283,8 @@ class ImportEngine {
                     timestamp: Date.now(),
                     resolvedBy: null,
                     resolvedAt: null,
-                    importSource: importSource
+                    importSource: importSource,
+                    batchId: batchId
                 };
 
                 await db.put(STORES.CONFLICTS, conflict);
@@ -287,8 +296,19 @@ class ImportEngine {
                     distributionId: conflictDist.id,
                     importSource,
                     conflictType: record.conflictType,
-                    errors: record.errors
+                    errors: record.errors,
+                    batchId: batchId
                 });
+
+                if (batchId) {
+                    await batchEngine.addRecordToBatch(batchId, conflictDist.id, true, conflict.id);
+                    await batchEngine.addFailedRecord(batchId, record.rowIndex, record.conflictType, record.errors.join('; '), {
+                        residentName: record.residentName,
+                        idCard: record.idCard,
+                        supplyName: record.supplyName,
+                        quantity: record.quantity
+                    });
+                }
 
                 results.conflicts++;
                 results.conflicted.push(conflict);
@@ -922,3 +942,385 @@ class SyncEngine {
 }
 
 const syncEngine = new SyncEngine();
+
+class BatchEngine {
+    constructor() {
+        this.onBatchUpdated = null;
+    }
+
+    async generateFileHash(content) {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(content);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    async checkDuplicateImport(fileHash) {
+        const existingBatches = await db.getAll(STORES.BATCHES, 'fileHash', IDBKeyRange.only(fileHash));
+        return existingBatches.length > 0 ? existingBatches[0] : null;
+    }
+
+    async createBatch(importSource, fileName, fileHash, totalRecords) {
+        const batch = {
+            id: generateId('batch'),
+            source: importSource,
+            fileName: fileName,
+            fileHash: fileHash,
+            status: BATCH_STATUS.PROCESSING,
+            createdBy: CURRENT_USER.id,
+            createdByName: CURRENT_USER.name,
+            timestamp: Date.now(),
+            totalRecords: totalRecords,
+            successCount: 0,
+            conflictCount: 0,
+            revokedCount: 0,
+            failedRecords: [],
+            distributionIds: [],
+            conflictIds: [],
+            notes: null
+        };
+
+        await db.put(STORES.BATCHES, batch);
+
+        await addAuditLog('batch_created', {
+            batchId: batch.id,
+            source: importSource,
+            fileName: fileName,
+            totalRecords
+        });
+
+        return batch;
+    }
+
+    async updateBatchStats(batchId, updates) {
+        const batch = await db.get(STORES.BATCHES, batchId);
+        if (!batch) return null;
+
+        Object.assign(batch, updates);
+
+        if (batch.successCount + batch.conflictCount >= batch.totalRecords) {
+            if (batch.conflictCount > 0) {
+                batch.status = BATCH_STATUS.PARTIAL;
+            } else {
+                batch.status = BATCH_STATUS.COMPLETED;
+            }
+        }
+
+        await db.put(STORES.BATCHES, batch);
+
+        if (this.onBatchUpdated) {
+            this.onBatchUpdated(batch);
+        }
+
+        return batch;
+    }
+
+    async addRecordToBatch(batchId, distributionId, isConflict = false, conflictId = null) {
+        const batch = await db.get(STORES.BATCHES, batchId);
+        if (!batch) return;
+
+        batch.distributionIds.push(distributionId);
+
+        if (isConflict) {
+            batch.conflictCount++;
+            if (conflictId) {
+                batch.conflictIds.push(conflictId);
+            }
+        } else {
+            batch.successCount++;
+        }
+
+        if (batch.successCount + batch.conflictCount >= batch.totalRecords) {
+            if (batch.conflictCount > 0) {
+                batch.status = BATCH_STATUS.PARTIAL;
+            } else {
+                batch.status = BATCH_STATUS.COMPLETED;
+            }
+        }
+
+        await db.put(STORES.BATCHES, batch);
+
+        if (this.onBatchUpdated) {
+            this.onBatchUpdated(batch);
+        }
+    }
+
+    async addFailedRecord(batchId, recordIndex, errorType, errorMessage, recordData) {
+        const batch = await db.get(STORES.BATCHES, batchId);
+        if (!batch) return;
+
+        batch.failedRecords.push({
+            index: recordIndex,
+            type: errorType,
+            message: errorMessage,
+            data: recordData
+        });
+
+        await db.put(STORES.BATCHES, batch);
+    }
+
+    async getBatch(batchId) {
+        return await db.get(STORES.BATCHES, batchId);
+    }
+
+    async getBatches(filters = {}) {
+        let batches = await db.getAll(STORES.BATCHES, 'timestamp');
+        batches.sort((a, b) => b.timestamp - a.timestamp);
+
+        if (filters.status && filters.status !== 'all') {
+            batches = batches.filter(b => b.status === filters.status);
+        }
+
+        if (filters.source && filters.source !== 'all') {
+            batches = batches.filter(b => b.source === filters.source);
+        }
+
+        if (filters.startDate) {
+            const start = new Date(filters.startDate).setHours(0, 0, 0, 0);
+            batches = batches.filter(b => b.timestamp >= start);
+        }
+
+        if (filters.endDate) {
+            const end = new Date(filters.endDate).setHours(23, 59, 59, 999);
+            batches = batches.filter(b => b.timestamp <= end);
+        }
+
+        return batches;
+    }
+
+    async getBatchDistributions(batchId) {
+        return await db.getAll(STORES.DISTRIBUTIONS, 'batchId', IDBKeyRange.only(batchId));
+    }
+
+    async getBatchConflicts(batchId) {
+        return await db.getAll(STORES.CONFLICTS, 'batchId', IDBKeyRange.only(batchId));
+    }
+
+    async getBatchPendingConflicts(batchId) {
+        const conflicts = await this.getBatchConflicts(batchId);
+        return conflicts.filter(c => c.status === CONFLICT_STATUS.PENDING);
+    }
+
+    async batchApprove(batchId) {
+        if (CURRENT_USER.role !== ROLES.ADMIN) {
+            throw new Error('只有管理员可以批量通过');
+        }
+
+        const batch = await db.get(STORES.BATCHES, batchId);
+        if (!batch) throw new Error('批次不存在');
+
+        const pendingConflicts = await this.getBatchPendingConflicts(batchId);
+        let approvedCount = 0;
+
+        for (const conflict of pendingConflicts) {
+            await syncEngine.resolveConflict(conflict.id, 'approve');
+            approvedCount++;
+        }
+
+        await addAuditLog('batch_approve', {
+            batchId,
+            approvedCount,
+            batchName: batch.fileName
+        });
+
+        return approvedCount;
+    }
+
+    async batchReject(batchId) {
+        if (CURRENT_USER.role !== ROLES.ADMIN) {
+            throw new Error('只有管理员可以批量驳回');
+        }
+
+        const batch = await db.get(STORES.BATCHES, batchId);
+        if (!batch) throw new Error('批次不存在');
+
+        const pendingConflicts = await this.getBatchPendingConflicts(batchId);
+        let rejectedCount = 0;
+
+        for (const conflict of pendingConflicts) {
+            await syncEngine.resolveConflict(conflict.id, 'reject');
+            rejectedCount++;
+        }
+
+        await addAuditLog('batch_reject', {
+            batchId,
+            rejectedCount,
+            batchName: batch.fileName
+        });
+
+        return rejectedCount;
+    }
+
+    async retryFailedRecords(batchId) {
+        if (CURRENT_USER.role !== ROLES.ADMIN) {
+            throw new Error('只有管理员可以重试失败项');
+        }
+
+        const batch = await db.get(STORES.BATCHES, batchId);
+        if (!batch) throw new Error('批次不存在');
+
+        const pendingConflicts = await this.getBatchPendingConflicts(batchId);
+        let retriedCount = 0;
+
+        for (const conflict of pendingConflicts) {
+            const dist = await db.get(STORES.DISTRIBUTIONS, conflict.distributionId);
+            if (dist) {
+                const revalidate = await this.revalidateDistribution(dist);
+                if (revalidate.success) {
+                    await db.delete(STORES.CONFLICTS, conflict.id);
+
+                dist.status = DISTRIBUTION_STATUS.PENDING;
+                dist.batchId = batchId;
+                await db.put(STORES.DISTRIBUTIONS, dist);
+
+                await syncEngine.addToQueue('create_distribution', dist);
+                retriedCount++;
+                }
+            }
+        }
+
+        await addAuditLog('batch_retry', {
+            batchId,
+            retriedCount,
+            batchName: batch.fileName
+        });
+
+        return retriedCount;
+    }
+
+    async revalidateDistribution(distribution) {
+        const resident = distribution.residentId ? await db.get(STORES.RESIDENTS, distribution.residentId) : null;
+        const supply = distribution.supplyId ? await db.get(STORES.SUPPLIES, distribution.supplyId) : null;
+
+        if (!resident || !supply) {
+            return { success: false, error: '居民或物资不存在' };
+        }
+
+        if (distribution.quantity > supply.currentStock) {
+            return { success: false, error: '库存不足' };
+        }
+
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+
+        const todayDistributions = await db.getAll(
+            STORES.DISTRIBUTIONS,
+            'resident_supply',
+            [resident.id, supply.id]
+        );
+
+        const todayQty = todayDistributions
+            .filter(d => d.timestamp >= todayStart.getTime() && !d.rejected && d.id !== distribution.id)
+            .reduce((sum, d) => sum + d.quantity, 0);
+
+        if (todayQty + distribution.quantity > supply.dailyLimit) {
+            return { success: false, error: '超过每日限领' };
+        }
+
+        return { success: true };
+    }
+
+    async revokeBatch(batchId) {
+        if (CURRENT_USER.role !== ROLES.ADMIN) {
+            throw new Error('只有管理员可以撤销批次');
+        }
+
+        const batch = await db.get(STORES.BATCHES, batchId);
+        if (!batch) throw new Error('批次不存在');
+
+        const distributions = await this.getBatchDistributions(batchId);
+        const serverState = await db.get(STORES.SERVER_STATE, 'server_supplies');
+        let revokedCount = 0;
+
+        for (const dist of distributions) {
+            if (dist.status === DISTRIBUTION_STATUS.SYNCED && !dist.rejected) {
+                const supply = dist.supplyId ? await db.get(STORES.SUPPLIES, dist.supplyId) : null;
+                const serverSupply = serverState && dist.supplyId
+                    ? serverState.data.find(s => s.id === dist.supplyId)
+                    : null;
+
+                if (supply) {
+                    supply.currentStock = Math.min(supply.totalStock, supply.currentStock + dist.quantity);
+                    await db.put(STORES.SUPPLIES, supply);
+                }
+
+                if (serverSupply) {
+                    serverSupply.currentStock = Math.min(serverSupply.totalStock, serverSupply.currentStock + dist.quantity);
+                }
+
+                dist.revoked = true;
+                dist.revokedAt = Date.now();
+                dist.revokedBy = CURRENT_USER.id;
+                dist.revokedByName = CURRENT_USER.name;
+                dist.status = DISTRIBUTION_STATUS.CONFLICTED;
+                await db.put(STORES.DISTRIBUTIONS, dist);
+
+                revokedCount++;
+            } else if (dist.status === DISTRIBUTION_STATUS.PENDING) {
+                dist.revoked = true;
+                dist.revokedAt = Date.now();
+                dist.revokedBy = CURRENT_USER.id;
+                dist.revokedByName = CURRENT_USER.name;
+                await db.put(STORES.DISTRIBUTIONS, dist);
+
+                revokedCount++;
+            }
+        }
+
+        if (serverState) {
+            await db.put(STORES.SERVER_STATE, serverState);
+        }
+
+        batch.status = BATCH_STATUS.REVOKED;
+        batch.revokedCount = revokedCount;
+        batch.revokedAt = Date.now();
+        batch.revokedBy = CURRENT_USER.id;
+        batch.revokedByName = CURRENT_USER.name;
+        await db.put(STORES.BATCHES, batch);
+
+        const conflicts = await this.getBatchConflicts(batchId);
+        for (const conflict of conflicts) {
+            if (conflict.status === CONFLICT_STATUS.PENDING) {
+                conflict.status = CONFLICT_STATUS.REJECTED;
+                conflict.resolvedBy = CURRENT_USER.id;
+                conflict.resolvedByName = CURRENT_USER.name;
+                conflict.resolvedAt = Date.now();
+                conflict.resolution = 'reject';
+                await db.put(STORES.CONFLICTS, conflict);
+
+                const conflictDist = await db.get(STORES.DISTRIBUTIONS, conflict.distributionId);
+                if (conflictDist) {
+                    conflictDist.rejected = true;
+                    conflictDist.rejectedReason = '批次撤销';
+                    conflictDist.resolvedBy = CURRENT_USER.id;
+                    conflictDist.resolvedByName = CURRENT_USER.name;
+                    conflictDist.resolvedAt = Date.now();
+                    await db.put(STORES.DISTRIBUTIONS, conflictDist);
+                }
+            }
+        }
+
+        await addAuditLog('batch_revoke', {
+            batchId,
+            revokedCount,
+            batchName: batch.fileName
+        });
+
+        return revokedCount;
+    }
+
+    async getBatchStats() {
+        const batches = await db.getAll(STORES.BATCHES);
+
+        return {
+            total: batches.length,
+            processing: batches.filter(b => b.status === BATCH_STATUS.PROCESSING).length,
+            completed: batches.filter(b => b.status === BATCH_STATUS.COMPLETED).length,
+            partial: batches.filter(b => b.status === BATCH_STATUS.PARTIAL).length,
+            revoked: batches.filter(b => b.status === BATCH_STATUS.REVOKED).length
+        };
+    }
+}
+
+const batchEngine = new BatchEngine();

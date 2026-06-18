@@ -1,0 +1,37 @@
+[
+  {
+    "residentName": "孙七",
+    "idCard": "110101199405055678",
+    "supplyName": "瓶装饮用水",
+    "quantity": 2,
+    "notes": "JSON导入-成功"
+  },
+  {
+    "residentName": "周八",
+    "idCard": "110101199506066789",
+    "supplyName": "方便面",
+    "quantity": 3,
+    "notes": "JSON导入-成功"
+  },
+  {
+    "residentName": "吴九",
+    "idCard": "110101199607077890",
+    "supplyName": "毛毯",
+    "quantity": 1,
+    "notes": "JSON导入-成功"
+  },
+  {
+    "residentName": "孙七",
+    "idCard": "110101199405055678",
+    "supplyName": "瓶装饮用水",
+    "quantity": 5,
+    "notes": "JSON导入-超每日限领-冲突"
+  },
+  {
+    "residentName": "郑十",
+    "idCard": "110101199708088901",
+    "supplyName": "不存在的物资",
+    "quantity": 1,
+    "notes": "JSON导入-物资不存在-失败"
+  }
+]

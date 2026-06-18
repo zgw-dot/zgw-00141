@@ -36,6 +36,7 @@ function navigateTo(viewName) {
         dashboard: '物资签到',
         distribute: '物资领取',
         conflicts: '冲突复核',
+        batches: '导入中心',
         history: '领取记录',
         export: '审计导出',
         supplies: '物资配置'
@@ -52,6 +53,8 @@ function navigateTo(viewName) {
         refreshDistributeView();
     } else if (viewName === 'conflicts') {
         refreshConflictsView();
+    } else if (viewName === 'batches') {
+        refreshBatchesView();
     } else if (viewName === 'history') {
         refreshHistoryView();
     } else if (viewName === 'export') {
@@ -97,6 +100,21 @@ async function refreshStats() {
         }
     } else if (alertSection) {
         alertSection.style.display = 'none';
+    }
+
+    const partialBatches = await batchEngine.getBatches({ status: BATCH_STATUS.PARTIAL });
+    const processingBatches = await batchEngine.getBatches({ status: BATCH_STATUS.PROCESSING });
+    const batchAlertSection = document.getElementById('batch-alert-section');
+    const batchAlertDesc = document.getElementById('batch-alert-desc');
+    
+    const pendingBatchCount = partialBatches.length + processingBatches.length;
+    if (batchAlertSection && pendingBatchCount > 0) {
+        batchAlertSection.style.display = 'block';
+        if (batchAlertDesc) {
+            batchAlertDesc.textContent = `${pendingBatchCount} 个批次需要处理`;
+        }
+    } else if (batchAlertSection) {
+        batchAlertSection.style.display = 'none';
     }
 }
 
@@ -560,6 +578,7 @@ async function resolveConflict(resolution) {
 
 async function refreshHistoryView() {
     await populateSupplyFilter();
+    await populateBatchFilter();
     await filterHistory();
 }
 
@@ -573,9 +592,23 @@ async function populateSupplyFilter() {
         supplies.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
 }
 
+async function populateBatchFilter() {
+    const batches = await db.getAll(STORES.BATCHES, 'timestamp');
+    const selectEl = document.getElementById('filter-batch');
+    
+    if (!selectEl) return;
+    
+    const batchOptions = batches.slice(0, 20).map(b => 
+        `<option value="${b.id}">${b.fileName} (${formatDate(b.timestamp)})</option>`
+    ).join('');
+    
+    selectEl.innerHTML = '<option value="all">全部批次</option>' + batchOptions;
+}
+
 async function filterHistory() {
     const statusFilter = document.getElementById('filter-status')?.value || 'all';
     const supplyFilter = document.getElementById('filter-supply')?.value || 'all';
+    const batchFilter = document.getElementById('filter-batch')?.value || 'all';
     
     let distributions = await db.getAll(STORES.DISTRIBUTIONS, 'timestamp');
     distributions.sort((a, b) => b.timestamp - a.timestamp);
@@ -590,6 +623,10 @@ async function filterHistory() {
     
     if (supplyFilter !== 'all') {
         distributions = distributions.filter(d => d.supplyId === supplyFilter);
+    }
+    
+    if (batchFilter !== 'all') {
+        distributions = distributions.filter(d => d.batchId === batchFilter);
     }
     
     const listEl = document.getElementById('history-list');
@@ -611,7 +648,10 @@ async function filterHistory() {
     listEl.innerHTML = distributions.map(d => {
         const supply = supplyMap.get(d.supplyId);
         let statusClass, statusText;
-        if (d.rejected) {
+        if (d.revoked) {
+            statusClass = 'conflicted';
+            statusText = '已撤销';
+        } else if (d.rejected) {
             statusClass = 'conflicted';
             statusText = '已驳回';
         } else if (d.status === DISTRIBUTION_STATUS.SYNCED) {
@@ -627,11 +667,14 @@ async function filterHistory() {
         const sourceBadge = d.importSource 
             ? `<span class="conflict-source" style="background: rgba(6, 182, 212, 0.1); color: var(--info); padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px;">${getImportSourceLabel(d.importSource)}</span>`
             : '';
+        const batchBadge = d.batchId
+            ? `<span class="conflict-source" style="background: rgba(37, 99, 235, 0.1); color: var(--primary); padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px; cursor: pointer;" onclick="event.stopPropagation(); navigateToBatch('${d.batchId}')">批次: ${d.batchId.slice(-8)}</span>`
+            : '';
         
         return `
             <div class="history-item">
                 <div class="history-header">
-                    <div class="history-name">${d.residentName || '未知居民'}${sourceBadge}</div>
+                    <div class="history-name">${d.residentName || '未知居民'}${sourceBadge}${batchBadge}</div>
                     <span class="status-badge ${statusClass}">${statusText}</span>
                 </div>
                 <div class="history-supply">${d.supplyName || '未知物资'}</div>
@@ -639,6 +682,7 @@ async function filterHistory() {
                 ${d.notes ? `<div class="history-quantity" style="color: var(--text-secondary); margin-top: 4px;">备注: ${d.notes}</div>` : ''}
                 ${d.resolvedByName ? `<div class="history-quantity" style="color: var(--text-secondary); margin-top: 4px;">处理人: ${d.resolvedByName}${d.resolvedAt ? ` (${formatDate(d.resolvedAt)})` : ''}</div>` : ''}
                 ${d.rejected ? `<div class="history-quantity" style="color: var(--danger); margin-top: 4px;">状态: ${d.rejectedReason || '已驳回'}</div>` : ''}
+                ${d.revoked ? `<div class="history-quantity" style="color: var(--danger); margin-top: 4px;">状态: 已撤销 (${d.revokedByName || '管理员'})</div>` : ''}
                 <div class="history-footer">
                     <span class="history-time">${formatDate(d.timestamp)}</span>
                     ${d.syncedAt ? `<span class="history-time">同步于 ${formatDate(d.syncedAt)}</span>` : ''}
@@ -882,7 +926,12 @@ async function deleteSupply(supplyId) {
 
 let currentImportData = null;
 let currentValidatedRecords = null;
+let currentBatchId = null;
+let currentFileContent = null;
+let currentFileName = null;
 let selectedRoleForSwitch = null;
+let selectedBatchIdForDetail = null;
+let batchFilters = { status: 'all', source: 'all', startDate: '', endDate: '' };
 
 function refreshUserDisplay() {
     const avatarEl = document.getElementById('user-avatar');
@@ -898,6 +947,7 @@ async function refreshAllViews() {
     await refreshDashboard();
     if (currentView === 'distribute') await refreshDistributeView();
     if (currentView === 'conflicts') await refreshConflictsView();
+    if (currentView === 'batches') await refreshBatchesView();
     if (currentView === 'history') await refreshHistoryView();
     if (currentView === 'export') await refreshExportView();
     if (currentView === 'supplies') await refreshSuppliesView();
@@ -990,6 +1040,20 @@ async function handleFileSelect(e) {
 
     try {
         const content = await readFileAsText(file);
+        currentFileContent = content;
+        currentFileName = file.name;
+
+        const fileHash = await batchEngine.generateFileHash(content);
+        const existingBatch = await batchEngine.checkDuplicateImport(fileHash);
+
+        if (existingBatch) {
+            const confirmDup = confirm(`检测到重复导入：\n\n文件 "${file.name}" 已于 ${formatDate(existingBatch.timestamp)} 由 ${existingBatch.createdByName} 导入\n成功 ${existingBatch.successCount} 条，冲突 ${existingBatch.conflictCount} 条\n\n是否仍然继续导入？`);
+            if (!confirmDup) {
+                e.target.value = '';
+                return;
+            }
+        }
+
         let records;
 
         if (format === 'csv') {
@@ -1002,6 +1066,7 @@ async function handleFileSelect(e) {
             throw new Error('文件中没有有效数据');
         }
 
+        currentBatchId = null;
         currentImportData = records;
         currentValidatedRecords = await importEngine.validateImportRecords(records, importSource);
 
@@ -1099,7 +1164,16 @@ async function confirmImport() {
     const importSource = format === 'csv' ? IMPORT_SOURCES.CSV_IMPORT : IMPORT_SOURCES.JSON_IMPORT;
 
     try {
-        const results = await importEngine.processImport(currentValidatedRecords, importSource);
+        const fileHash = currentFileContent ? await batchEngine.generateFileHash(currentFileContent) : null;
+        const batch = await batchEngine.createBatch(
+            importSource,
+            currentFileName || '未命名导入',
+            fileHash,
+            currentValidatedRecords.length
+        );
+        currentBatchId = batch.id;
+
+        const results = await importEngine.processImport(currentValidatedRecords, importSource, batch.id);
 
         const resultsEl = document.getElementById('import-results');
         if (resultsEl) {
@@ -1111,9 +1185,13 @@ async function confirmImport() {
             resultsEl.innerHTML = `
                 <div style="font-weight: 600; margin-bottom: 8px;">导入完成</div>
                 <div style="font-size: 13px; color: var(--text-secondary);">
+                    批次号: ${batch.id.slice(-8)}<br>
                     成功导入: ${results.success} 条<br>
                     进入复核: ${results.conflicts} 条
                 </div>
+                <button class="btn-primary-small" style="margin-top: 12px; width: 100%;" onclick="navigateToBatch('${batch.id}')">
+                    查看批次详情
+                </button>
             `;
             resultsEl.style.display = 'block';
         }
@@ -1122,6 +1200,7 @@ async function confirmImport() {
 
         cancelImport();
         refreshDashboard();
+        await refreshAllViews();
 
     } catch (error) {
         showToast('导入失败: ' + error.message);
@@ -1327,11 +1406,14 @@ async function refreshConflictsView() {
         const sourceBadge = c.importSource 
             ? `<span class="conflict-source" style="background: rgba(6, 182, 212, 0.1); color: var(--info); padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px;">${getImportSourceLabel(c.importSource)}</span>`
             : '';
+        const batchBadge = c.batchId
+            ? `<span class="conflict-source" style="background: rgba(37, 99, 235, 0.1); color: var(--primary); padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px; cursor: pointer;" onclick="event.stopPropagation(); navigateToBatch('${c.batchId}')">批次: ${c.batchId.slice(-8)}</span>`
+            : '';
         
         return `
             <div class="conflict-item" onclick="openConflictModal('${c.id}')">
                 <div class="conflict-header">
-                    <div class="conflict-title">${dist ? `${dist.residentName} - ${dist.supplyName}` : '未知记录'}${sourceBadge}</div>
+                    <div class="conflict-title">${dist ? `${dist.residentName} - ${dist.supplyName}` : '未知记录'}${sourceBadge}${batchBadge}</div>
                     <span class="conflict-type">${typeLabel}</span>
                 </div>
                 <div class="conflict-desc">${getConflictDescription(c)}</div>
@@ -1342,6 +1424,425 @@ async function refreshConflictsView() {
             </div>
         `;
     }).join('');
+}
+
+function getBatchStatusLabel(status) {
+    const labels = {
+        [BATCH_STATUS.PROCESSING]: '处理中',
+        [BATCH_STATUS.COMPLETED]: '已完成',
+        [BATCH_STATUS.PARTIAL]: '部分成功',
+        [BATCH_STATUS.REVOKED]: '已撤销'
+    };
+    return labels[status] || status;
+}
+
+function getBatchStatusClass(status) {
+    const classes = {
+        [BATCH_STATUS.PROCESSING]: 'pending',
+        [BATCH_STATUS.COMPLETED]: 'synced',
+        [BATCH_STATUS.PARTIAL]: 'warning',
+        [BATCH_STATUS.REVOKED]: 'conflicted'
+    };
+    return classes[status] || '';
+}
+
+async function refreshBatchesView() {
+    const stats = await batchEngine.getBatchStats();
+    
+    document.getElementById('batch-total').textContent = stats.total;
+    document.getElementById('batch-completed').textContent = stats.completed;
+    document.getElementById('batch-partial').textContent = stats.partial;
+    document.getElementById('batch-revoked').textContent = stats.revoked;
+
+    document.getElementById('batch-filter-status').value = batchFilters.status;
+    document.getElementById('batch-filter-source').value = batchFilters.source;
+    document.getElementById('batch-filter-start').value = batchFilters.startDate;
+    document.getElementById('batch-filter-end').value = batchFilters.endDate;
+
+    await renderBatchList();
+}
+
+function onBatchFilterChange() {
+    batchFilters.status = document.getElementById('batch-filter-status').value;
+    batchFilters.source = document.getElementById('batch-filter-source').value;
+    batchFilters.startDate = document.getElementById('batch-filter-start').value;
+    batchFilters.endDate = document.getElementById('batch-filter-end').value;
+    renderBatchList();
+}
+
+async function renderBatchList() {
+    const listEl = document.getElementById('batch-list');
+    if (!listEl) return;
+
+    const batches = await batchEngine.getBatches(batchFilters);
+
+    if (batches.length === 0) {
+        listEl.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-icon">📦</div>
+                <div class="empty-text">暂无导入批次</div>
+            </div>
+        `;
+        return;
+    }
+
+    listEl.innerHTML = batches.map(batch => {
+        const statusClass = getBatchStatusClass(batch.status);
+        const statusLabel = getBatchStatusLabel(batch.status);
+
+        return `
+            <div class="batch-card" onclick="openBatchDetailModal('${batch.id}')">
+                <div class="batch-header">
+                    <div class="batch-title">
+                        <span class="batch-icon">📦</span>
+                        <span class="batch-filename">${batch.fileName}</span>
+                    </div>
+                    <span class="status-badge ${statusClass}">${statusLabel}</span>
+                </div>
+                <div class="batch-meta">
+                    <span>批次号: ${batch.id.slice(-8)}</span>
+                    <span>${getImportSourceLabel(batch.source)}</span>
+                </div>
+                <div class="batch-stats-row">
+                    <div class="batch-stat-item">
+                        <span class="batch-stat-num">${batch.totalRecords}</span>
+                        <span class="batch-stat-label">总计</span>
+                    </div>
+                    <div class="batch-stat-item success">
+                        <span class="batch-stat-num">${batch.successCount}</span>
+                        <span class="batch-stat-label">成功</span>
+                    </div>
+                    <div class="batch-stat-item warning">
+                        <span class="batch-stat-num">${batch.conflictCount}</span>
+                        <span class="batch-stat-label">冲突</span>
+                    </div>
+                    <div class="batch-stat-item danger">
+                        <span class="batch-stat-num">${batch.revokedCount}</span>
+                        <span class="batch-stat-label">已撤销</span>
+                    </div>
+                </div>
+                <div class="batch-footer">
+                    <span class="batch-operator">${batch.createdByName}</span>
+                    <span class="batch-time">${formatDate(batch.timestamp)}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+async function navigateToBatch(batchId) {
+    selectedBatchIdForDetail = batchId;
+    navigateTo('batches');
+    setTimeout(() => openBatchDetailModal(batchId), 100);
+}
+
+async function openBatchDetailModal(batchId) {
+    selectedBatchIdForDetail = batchId;
+    const batch = await batchEngine.getBatch(batchId);
+    if (!batch) {
+        showToast('批次不存在');
+        return;
+    }
+
+    const pendingConflicts = await batchEngine.getBatchPendingConflicts(batchId);
+    const distributions = await batchEngine.getBatchDistributions(batchId);
+    const isAdmin = CURRENT_USER.role === ROLES.ADMIN;
+    const hasPending = pendingConflicts.length > 0;
+    const isRevoked = batch.status === BATCH_STATUS.REVOKED;
+
+    const bodyEl = document.getElementById('batch-detail-body');
+    const footerEl = document.getElementById('batch-detail-footer');
+    const statusClass = getBatchStatusClass(batch.status);
+    const statusLabel = getBatchStatusLabel(batch.status);
+
+    const typeLabels = {
+        [CONFLICT_TYPES.STOCK_OVERFLOW]: '库存不足',
+        [CONFLICT_TYPES.DUPLICATE_DISTRIBUTION]: '重复领取',
+        [CONFLICT_TYPES.DAILY_LIMIT_EXCEEDED]: '超每日限领',
+        [CONFLICT_TYPES.INVALID_RESIDENT]: '居民不存在',
+        [CONFLICT_TYPES.INVALID_SUPPLY]: '物资不存在',
+        [CONFLICT_TYPES.IMPORT_VALIDATION_ERROR]: '导入验证错误',
+        [CONFLICT_TYPES.VERSION_CONFLICT]: '版本冲突'
+    };
+
+    let failedRecordsHtml = '';
+    if (batch.failedRecords && batch.failedRecords.length > 0) {
+        failedRecordsHtml = `
+            <div class="conflict-detail-section">
+                <div class="conflict-detail-title" style="cursor: pointer;" onclick="toggleBatchFailedRecords()">
+                    <span id="failed-toggle-icon">▼</span> 失败记录详情 (${batch.failedRecords.length} 条)
+                </div>
+                <div id="batch-failed-records" style="margin-top: 8px;">
+                    <div class="import-preview-table">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>行号</th>
+                                    <th>居民</th>
+                                    <th>物资</th>
+                                    <th>数量</th>
+                                    <th>失败原因</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${batch.failedRecords.map(fr => `
+                                    <tr class="error">
+                                        <td>${fr.index}</td>
+                                        <td>${fr.data?.residentName || '-'}</td>
+                                        <td>${fr.data?.supplyName || '-'}</td>
+                                        <td>${fr.data?.quantity || 0}</td>
+                                        <td>${typeLabels[fr.type] || fr.type}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    let affectedRecordsHtml = '';
+    if (distributions.length > 0) {
+        const supplies = await db.getAll(STORES.SUPPLIES);
+        const supplyMap = new Map(supplies.map(s => [s.id, s]));
+
+        affectedRecordsHtml = `
+            <div class="conflict-detail-section">
+                <div class="conflict-detail-title" style="cursor: pointer;" onclick="toggleBatchRecords()">
+                    <span id="records-toggle-icon">▶</span> 受影响记录 (${distributions.length} 条)
+                </div>
+                <div id="batch-records" style="margin-top: 8px; display: none;">
+                    <div class="import-preview-table">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>居民</th>
+                                    <th>物资</th>
+                                    <th>数量</th>
+                                    <th>状态</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${distributions.map(d => {
+                                    const supply = supplyMap.get(d.supplyId);
+                                    let statusText = '待同步';
+                                    let statusClass = 'pending';
+                                    if (d.revoked) {
+                                        statusText = '已撤销';
+                                        statusClass = 'conflicted';
+                                    } else if (d.rejected) {
+                                        statusText = '已驳回';
+                                        statusClass = 'conflicted';
+                                    } else if (d.status === DISTRIBUTION_STATUS.SYNCED) {
+                                        statusText = '已同步';
+                                        statusClass = 'synced';
+                                    } else if (d.status === DISTRIBUTION_STATUS.CONFLICTED) {
+                                        statusText = '冲突';
+                                        statusClass = 'conflicted';
+                                    }
+                                    return `
+                                        <tr>
+                                            <td>${d.residentName || '-'}</td>
+                                            <td>${d.supplyName || '-'}</td>
+                                            <td>${d.quantity} ${supply ? supply.unit : ''}</td>
+                                            <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+                                        </tr>
+                                    `;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    bodyEl.innerHTML = `
+        <div class="conflict-detail-section">
+            <div class="data-row">
+                <span class="data-row-label">文件名称</span>
+                <span class="data-row-value">${batch.fileName}</span>
+            </div>
+            <div class="data-row">
+                <span class="data-row-label">批次状态</span>
+                <span class="data-row-value"><span class="status-badge ${statusClass}">${statusLabel}</span></span>
+            </div>
+            <div class="data-row">
+                <span class="data-row-label">来源类型</span>
+                <span class="data-row-value">${getImportSourceLabel(batch.source)}</span>
+            </div>
+            <div class="data-row">
+                <span class="data-row-label">创建人</span>
+                <span class="data-row-value">${batch.createdByName}</span>
+            </div>
+            <div class="data-row">
+                <span class="data-row-label">创建时间</span>
+                <span class="data-row-value">${formatDate(batch.timestamp)}</span>
+            </div>
+            ${batch.revokedAt ? `
+            <div class="data-row">
+                <span class="data-row-label">撤销时间</span>
+                <span class="data-row-value">${formatDate(batch.revokedAt)}</span>
+            </div>
+            <div class="data-row">
+                <span class="data-row-label">撤销人</span>
+                <span class="data-row-value">${batch.revokedByName || '-'}</span>
+            </div>
+            ` : ''}
+        </div>
+
+        <div class="conflict-detail-section">
+            <div class="conflict-detail-title">导入统计</div>
+            <div class="batch-stats-row">
+                <div class="batch-stat-item">
+                    <span class="batch-stat-num">${batch.totalRecords}</span>
+                    <span class="batch-stat-label">总计</span>
+                </div>
+                <div class="batch-stat-item success">
+                    <span class="batch-stat-num">${batch.successCount}</span>
+                    <span class="batch-stat-label">成功</span>
+                </div>
+                <div class="batch-stat-item warning">
+                    <span class="batch-stat-num">${batch.conflictCount}</span>
+                    <span class="batch-stat-label">冲突</span>
+                </div>
+                <div class="batch-stat-item danger">
+                    <span class="batch-stat-num">${batch.revokedCount}</span>
+                    <span class="batch-stat-label">已撤销</span>
+                </div>
+            </div>
+        </div>
+
+        ${failedRecordsHtml}
+        ${affectedRecordsHtml}
+
+        ${hasPending && !isAdmin ? `
+        <div class="conflict-detail-section" style="color: var(--danger); font-size: 12px; padding: 12px; background: rgba(239, 68, 68, 0.1); border-radius: 8px;">
+            ⚠️ 您当前是志愿者身份，只能查看结果，不能执行批量操作。
+        </div>
+        ` : ''}
+
+        <div class="conflict-detail-section">
+            <div class="conflict-detail-title">导出批次</div>
+            <div style="display: flex; gap: 8px;">
+                <button class="modal-btn" style="flex: 1; background: rgba(16, 185, 129, 0.1); color: var(--success); padding: 10px;" onclick="exportBatchCSV('${batch.id}')">导出 CSV</button>
+                <button class="modal-btn" style="flex: 1; background: rgba(59, 130, 246, 0.1); color: var(--primary); padding: 10px;" onclick="exportBatchJSON('${batch.id}')">导出 JSON</button>
+            </div>
+        </div>
+    `;
+
+    let footerHtml = '<button class="modal-btn reject" onclick="closeBatchDetailModal()">关闭</button>';
+    
+    if (isAdmin && !isRevoked && hasPending) {
+        footerHtml = `
+            <button class="modal-btn reject" onclick="closeBatchDetailModal()">关闭</button>
+            <button class="modal-btn" style="background: rgba(6, 182, 212, 0.1); color: var(--info);" onclick="batchRetryFailed('${batch.id}')">重试失败项</button>
+            <button class="modal-btn reject" onclick="batchRejectAll('${batch.id}')">批量驳回</button>
+            <button class="modal-btn approve" onclick="batchApproveAll('${batch.id}')">批量通过</button>
+        `;
+    } else if (isAdmin && !isRevoked) {
+        footerHtml = `
+            <button class="modal-btn reject" onclick="closeBatchDetailModal()">关闭</button>
+            <button class="modal-btn" style="background: rgba(239, 68, 68, 0.1); color: var(--danger);" onclick="batchRevoke('${batch.id}')">撤销批次</button>
+        `;
+    }
+
+    footerEl.innerHTML = footerHtml;
+
+    document.getElementById('batch-detail-modal').style.display = 'flex';
+}
+
+function toggleBatchFailedRecords() {
+    const el = document.getElementById('batch-failed-records');
+    const icon = document.getElementById('failed-toggle-icon');
+    if (el) {
+        const isHidden = el.style.display === 'none';
+        el.style.display = isHidden ? 'block' : 'none';
+        icon.textContent = isHidden ? '▼' : '▶';
+    }
+}
+
+function toggleBatchRecords() {
+    const el = document.getElementById('batch-records');
+    const icon = document.getElementById('records-toggle-icon');
+    if (el) {
+        const isHidden = el.style.display === 'none';
+        el.style.display = isHidden ? 'block' : 'none';
+        icon.textContent = isHidden ? '▼' : '▶';
+    }
+}
+
+function closeBatchDetailModal() {
+    document.getElementById('batch-detail-modal').style.display = 'none';
+    selectedBatchIdForDetail = null;
+}
+
+async function batchApproveAll(batchId) {
+    if (!confirm('确定要批量通过该批次的所有待处理冲突吗？')) return;
+    
+    try {
+        const count = await batchEngine.batchApprove(batchId);
+        showToast(`已批量通过 ${count} 条记录`);
+        closeBatchDetailModal();
+        refreshBatchesView();
+        refreshConflictsView();
+        refreshDashboard();
+        refreshHistoryView();
+    } catch (error) {
+        showToast(error.message);
+        console.error('Batch approve error:', error);
+    }
+}
+
+async function batchRejectAll(batchId) {
+    if (!confirm('确定要批量驳回该批次的所有待处理冲突吗？')) return;
+    
+    try {
+        const count = await batchEngine.batchReject(batchId);
+        showToast(`已批量驳回 ${count} 条记录`);
+        closeBatchDetailModal();
+        refreshBatchesView();
+        refreshConflictsView();
+        refreshDashboard();
+        refreshHistoryView();
+    } catch (error) {
+        showToast(error.message);
+        console.error('Batch reject error:', error);
+    }
+}
+
+async function batchRetryFailed(batchId) {
+    if (!confirm('确定要重试该批次的所有失败项吗？')) return;
+    
+    try {
+        const count = await batchEngine.retryFailedRecords(batchId);
+        showToast(`已重试 ${count} 条记录`);
+        closeBatchDetailModal();
+        refreshBatchesView();
+        refreshConflictsView();
+        refreshDashboard();
+    } catch (error) {
+        showToast(error.message);
+        console.error('Batch retry error:', error);
+    }
+}
+
+async function batchRevoke(batchId) {
+    if (!confirm('确定要撤销该批次吗？撤销后已同步的记录将回滚库存，且无法恢复。')) return;
+    
+    try {
+        const count = await batchEngine.revokeBatch(batchId);
+        showToast(`已撤销批次，共回滚 ${count} 条记录`);
+        closeBatchDetailModal();
+        refreshBatchesView();
+        refreshConflictsView();
+        refreshDashboard();
+        refreshHistoryView();
+    } catch (error) {
+        showToast(error.message);
+        console.error('Batch revoke error:', error);
+    }
 }
 
 window.openSupplyModal = openSupplyModal;
@@ -1364,3 +1865,35 @@ window.selectRole = selectRole;
 window.confirmUserSwitch = confirmUserSwitch;
 window.refreshUserDisplay = refreshUserDisplay;
 window.refreshAllViews = refreshAllViews;
+window.navigateToBatch = navigateToBatch;
+window.openBatchDetailModal = openBatchDetailModal;
+window.closeBatchDetailModal = closeBatchDetailModal;
+window.onBatchFilterChange = onBatchFilterChange;
+window.toggleBatchFailedRecords = toggleBatchFailedRecords;
+window.toggleBatchRecords = toggleBatchRecords;
+window.batchApproveAll = batchApproveAll;
+window.batchRejectAll = batchRejectAll;
+window.batchRetryFailed = batchRetryFailed;
+window.batchRevoke = batchRevoke;
+window.exportBatchCSV = exportBatchCSV;
+window.exportBatchJSON = exportBatchJSON;
+
+async function exportBatchCSV(batchId) {
+    try {
+        const filename = await dataExporter.exportBatchAndDownload(batchId, 'csv');
+        showToast(`已导出: ${filename}`);
+    } catch (error) {
+        showToast(error.message);
+        console.error('Export batch CSV error:', error);
+    }
+}
+
+async function exportBatchJSON(batchId) {
+    try {
+        const filename = await dataExporter.exportBatchAndDownload(batchId, 'json');
+        showToast(`已导出: ${filename}`);
+    } catch (error) {
+        showToast(error.message);
+        console.error('Export batch JSON error:', error);
+    }
+}

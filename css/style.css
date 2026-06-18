@@ -1574,3 +1574,345 @@ html, body {
         grid-template-columns: 1fr 1fr;
     }
 }
+
+.batch-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.batch-stat {
+    background: var(--surface);
+    border-radius: 10px;
+    padding: 12px 8px;
+    text-align: center;
+    border: 1px solid var(--border);
+}
+
+.batch-stat div:first-child {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 2px;
+}
+
+.batch-stat div:last-child {
+    font-size: 10px;
+    color: var(--text-secondary);
+}
+
+.batch-filter-bar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+
+.batch-filter-bar select {
+    flex: 1;
+    min-width: 100px;
+}
+
+.batch-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.batch-card {
+    background: var(--surface);
+    border-radius: 12px;
+    padding: 16px;
+    border: 1px solid var(--border);
+    transition: all 0.2s;
+}
+
+.batch-card:active {
+    transform: scale(0.98);
+}
+
+.batch-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 12px;
+}
+
+.batch-card-title {
+    flex: 1;
+    min-width: 0;
+}
+
+.batch-file-name {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 14px;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.batch-meta {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.batch-status {
+    margin-left: 12px;
+    flex-shrink: 0;
+}
+
+.batch-status .status-badge {
+    font-size: 11px;
+    padding: 4px 10px;
+}
+
+.batch-stats-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.batch-stat-item {
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 8px;
+    text-align: center;
+}
+
+.batch-stat-item .num {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 2px;
+}
+
+.batch-stat-item .num.success { color: var(--success); }
+.batch-stat-item .num.warning { color: var(--warning); }
+.batch-stat-item .num.danger { color: var(--danger); }
+
+.batch-stat-item .label {
+    font-size: 10px;
+    color: var(--text-secondary);
+}
+
+.batch-card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+
+.batch-source {
+    font-size: 11px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.batch-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.batch-detail-info {
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 16px;
+}
+
+.batch-detail-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.batch-detail-row:last-child {
+    border-bottom: none;
+}
+
+.batch-detail-label {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.batch-detail-value {
+    font-weight: 500;
+    font-size: 12px;
+    color: var(--text-primary);
+}
+
+.batch-expand-btn {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
+    font-size: 13px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    transition: all 0.2s;
+}
+
+.batch-btn-arrow {
+    transition: transform 0.2s;
+}
+
+.batch-btn-arrow.expanded {
+    transform: rotate(180deg);
+}
+
+.batch-list-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 12px;
+    overflow: hidden;
+}
+
+.batch-list-section.collapsed {
+    display: none;
+}
+
+.failed-record-item {
+    padding: 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+.failed-record-item:last-child {
+    border-bottom: none;
+}
+
+.failed-record-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+
+.failed-record-index {
+    font-weight: 600;
+    font-size: 12px;
+    color: var(--text-primary);
+}
+
+.failed-record-type {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--danger);
+}
+
+.failed-record-message {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+}
+
+.failed-record-data {
+    background: var(--bg);
+    border-radius: 6px;
+    padding: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: monospace;
+    overflow-x: auto;
+}
+
+.batch-record-item {
+    padding: 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.batch-record-item:last-child {
+    border-bottom: none;
+}
+
+.batch-record-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.batch-record-name {
+    font-weight: 500;
+    font-size: 13px;
+    color: var(--text-primary);
+    margin-bottom: 2px;
+}
+
+.batch-record-supply {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.batch-record-status {
+    margin-left: 12px;
+    flex-shrink: 0;
+}
+
+.status-badge.processing {
+    background: rgba(59, 130, 246, 0.1);
+    color: var(--primary);
+}
+
+.status-badge.completed {
+    background: rgba(16, 185, 129, 0.1);
+    color: var(--success);
+}
+
+.status-badge.partial {
+    background: rgba(245, 158, 11, 0.1);
+    color: var(--warning);
+}
+
+.status-badge.revoked {
+    background: rgba(107, 114, 128, 0.1);
+    color: var(--text-muted);
+}
+
+.modal-batch-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.modal-batch-actions .modal-btn {
+    padding: 10px;
+    font-size: 13px;
+}
+
+.modal-batch-actions .modal-btn.retry {
+    background: rgba(245, 158, 11, 0.1);
+    color: var(--warning);
+}
+
+.modal-batch-actions .modal-btn.revoke {
+    background: rgba(107, 114, 128, 0.1);
+    color: var(--text-muted);
+}
+
+.alert-card.info {
+    border-left: 4px solid var(--info);
+}
+
+@media (max-width: 360px) {
+    .batch-stats {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+

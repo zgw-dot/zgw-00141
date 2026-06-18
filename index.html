@@ -69,6 +69,17 @@
                     </div>
                 </div>
 
+                <div class="alert-section" id="batch-alert-section" style="display: none;">
+                    <div class="alert-card info">
+                        <div class="alert-icon">📦</div>
+                        <div class="alert-content">
+                            <div class="alert-title">有待处理批次</div>
+                            <div class="alert-desc" id="batch-alert-desc">0 个批次需要处理</div>
+                        </div>
+                        <button class="alert-btn" onclick="navigateTo('batches')">去查看</button>
+                    </div>
+                </div>
+
                 <div class="section-title">快速操作</div>
                 <div class="action-grid">
                     <button class="action-btn primary" onclick="navigateTo('distribute')">
@@ -79,6 +90,10 @@
                         <span class="action-icon">⚖️</span>
                         <span>冲突复核</span>
                     </button>
+                    <button class="action-btn" onclick="navigateTo('batches')">
+                        <span class="action-icon">📦</span>
+                        <span>导入中心</span>
+                    </button>
                     <button class="action-btn" onclick="navigateTo('history')">
                         <span class="action-icon">📋</span>
                         <span>领取记录</span>
@@ -88,7 +103,7 @@
                         <span>审计导出</span>
                     </button>
                     <button class="action-btn" onclick="navigateTo('supplies')">
-                        <span class="action-icon">📦</span>
+                        <span class="action-icon">🎁</span>
                         <span>物资配置</span>
                     </button>
                 </div>
@@ -234,6 +249,11 @@
                         <option value="all">全部物资</option>
                     </select>
                 </div>
+                <div class="filter-bar">
+                    <select class="filter-select" id="filter-batch" onchange="filterHistory()">
+                        <option value="all">全部批次</option>
+                    </select>
+                </div>
                 <div class="history-list" id="history-list"></div>
             </section>
 
@@ -310,6 +330,55 @@
                     <div class="supply-config-list" id="supply-config-list"></div>
                 </div>
             </section>
+
+            <section id="view-batches" class="view">
+                <div class="batch-stats">
+                    <div class="batch-stat">
+                        <div class="batch-stat-value" id="batch-total">0</div>
+                        <div class="batch-stat-label">总批次</div>
+                    </div>
+                    <div class="batch-stat">
+                        <div class="batch-stat-value" id="batch-completed">0</div>
+                        <div class="batch-stat-label">已完成</div>
+                    </div>
+                    <div class="batch-stat">
+                        <div class="batch-stat-value" id="batch-partial">0</div>
+                        <div class="batch-stat-label">部分成功</div>
+                    </div>
+                    <div class="batch-stat">
+                        <div class="batch-stat-value" id="batch-revoked">0</div>
+                        <div class="batch-stat-label">已撤销</div>
+                    </div>
+                </div>
+
+                <div class="filter-bar">
+                    <select class="filter-select" id="batch-filter-status" onchange="onBatchFilterChange()">
+                        <option value="all">全部状态</option>
+                        <option value="processing">处理中</option>
+                        <option value="completed">已完成</option>
+                        <option value="partial">部分成功</option>
+                        <option value="revoked">已撤销</option>
+                    </select>
+                    <select class="filter-select" id="batch-filter-source" onchange="onBatchFilterChange()">
+                        <option value="all">全部来源</option>
+                        <option value="csv_import">CSV导入</option>
+                        <option value="json_import">JSON导入</option>
+                    </select>
+                </div>
+
+                <div class="filter-bar">
+                    <input type="date" class="filter-select" id="batch-filter-start" placeholder="开始日期" onchange="onBatchFilterChange()">
+                    <span style="align-self: center; color: var(--text-secondary);">至</span>
+                    <input type="date" class="filter-select" id="batch-filter-end" placeholder="结束日期" onchange="onBatchFilterChange()">
+                </div>
+
+                <div class="batch-list" id="batch-list">
+                    <div class="empty-state">
+                        <div class="empty-icon">📦</div>
+                        <div class="empty-text">暂无导入批次</div>
+                    </div>
+                </div>
+            </section>
         </main>
 
         <nav class="bottom-nav">
@@ -326,6 +395,10 @@
                 <span class="nav-label">复核</span>
                 <span class="nav-badge" id="conflict-badge" style="display: none;">0</span>
             </button>
+            <button class="nav-item" data-view="batches" onclick="navigateTo('batches')">
+                <span class="nav-icon">📦</span>
+                <span class="nav-label">导入</span>
+            </button>
             <button class="nav-item" data-view="history" onclick="navigateTo('history')">
                 <span class="nav-icon">📋</span>
                 <span class="nav-label">记录</span>
@@ -333,10 +406,6 @@
             <button class="nav-item" data-view="export" onclick="navigateTo('export')">
                 <span class="nav-icon">📤</span>
                 <span class="nav-label">导出</span>
-            </button>
-            <button class="nav-item" data-view="supplies" onclick="navigateTo('supplies')">
-                <span class="nav-icon">📦</span>
-                <span class="nav-label">物资</span>
             </button>
         </nav>
     </div>
@@ -474,6 +543,20 @@
             <div class="modal-footer">
                 <button class="modal-btn reject" onclick="closeUserSwitchModal()">取消</button>
                 <button class="modal-btn approve" onclick="confirmUserSwitch()" id="confirm-user-switch-btn">确认切换</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal" id="batch-detail-modal" style="display: none;">
+        <div class="modal-overlay" onclick="closeBatchDetailModal()"></div>
+        <div class="modal-content" style="max-width: 520px;">
+            <div class="modal-header">
+                <h3>批次详情</h3>
+                <button class="modal-close" onclick="closeBatchDetailModal()">✕</button>
+            </div>
+            <div class="modal-body" id="batch-detail-body"></div>
+            <div class="modal-footer" id="batch-detail-footer">
+                <button class="modal-btn reject" onclick="closeBatchDetailModal()">关闭</button>
             </div>
         </div>
     </div>

@@ -1,4 +1,4 @@
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const DB_NAME = 'shelter_supply_db';
 
 const STORES = {
@@ -8,7 +8,22 @@ const STORES = {
     OFFLINE_QUEUE: 'offline_queue',
     CONFLICTS: 'conflicts',
     AUDIT_LOGS: 'audit_logs',
-    SERVER_STATE: 'server_state'
+    SERVER_STATE: 'server_state',
+    BATCHES: 'batches'
+};
+
+const BATCH_STATUS = {
+    PROCESSING: 'processing',
+    COMPLETED: 'completed',
+    PARTIAL: 'partial',
+    REVOKED: 'revoked'
+};
+
+const BATCH_ACTIONS = {
+    APPROVE_ALL: 'approve_all',
+    REJECT_ALL: 'reject_all',
+    RETRY_FAILED: 'retry_failed',
+    REVOKE_BATCH: 'revoke_batch'
 };
 
 class Database {
@@ -31,6 +46,7 @@ class Database {
 
             request.onupgradeneeded = (event) => {
                 const db = event.target.result;
+                const oldVersion = event.oldVersion;
 
                 if (!db.objectStoreNames.contains(STORES.SUPPLIES)) {
                     const supplyStore = db.createObjectStore(STORES.SUPPLIES, { keyPath: 'id' });
@@ -50,6 +66,12 @@ class Database {
                     distStore.createIndex('status', 'status', { unique: false });
                     distStore.createIndex('timestamp', 'timestamp', { unique: false });
                     distStore.createIndex('resident_supply', ['residentId', 'supplyId'], { unique: false });
+                    distStore.createIndex('batchId', 'batchId', { unique: false });
+                } else if (oldVersion < 2) {
+                    const distStore = event.target.transaction.objectStore(STORES.DISTRIBUTIONS);
+                    if (!distStore.indexNames.contains('batchId')) {
+                        distStore.createIndex('batchId', 'batchId', { unique: false });
+                    }
                 }
 
                 if (!db.objectStoreNames.contains(STORES.OFFLINE_QUEUE)) {
@@ -63,16 +85,37 @@ class Database {
                     conflictStore.createIndex('distributionId', 'distributionId', { unique: true });
                     conflictStore.createIndex('status', 'status', { unique: false });
                     conflictStore.createIndex('timestamp', 'timestamp', { unique: false });
+                    conflictStore.createIndex('batchId', 'batchId', { unique: false });
+                } else if (oldVersion < 2) {
+                    const conflictStore = event.target.transaction.objectStore(STORES.CONFLICTS);
+                    if (!conflictStore.indexNames.contains('batchId')) {
+                        conflictStore.createIndex('batchId', 'batchId', { unique: false });
+                    }
                 }
 
                 if (!db.objectStoreNames.contains(STORES.AUDIT_LOGS)) {
                     const auditStore = db.createObjectStore(STORES.AUDIT_LOGS, { keyPath: 'id' });
                     auditStore.createIndex('timestamp', 'timestamp', { unique: false });
                     auditStore.createIndex('action', 'action', { unique: false });
+                    auditStore.createIndex('batchId', 'batchId', { unique: false });
+                } else if (oldVersion < 2) {
+                    const auditStore = event.target.transaction.objectStore(STORES.AUDIT_LOGS);
+                    if (!auditStore.indexNames.contains('batchId')) {
+                        auditStore.createIndex('batchId', 'batchId', { unique: false });
+                    }
                 }
 
                 if (!db.objectStoreNames.contains(STORES.SERVER_STATE)) {
                     db.createObjectStore(STORES.SERVER_STATE, { keyPath: 'id' });
+                }
+
+                if (!db.objectStoreNames.contains(STORES.BATCHES)) {
+                    const batchStore = db.createObjectStore(STORES.BATCHES, { keyPath: 'id' });
+                    batchStore.createIndex('timestamp', 'timestamp', { unique: false });
+                    batchStore.createIndex('status', 'status', { unique: false });
+                    batchStore.createIndex('source', 'source', { unique: false });
+                    batchStore.createIndex('createdBy', 'createdBy', { unique: false });
+                    batchStore.createIndex('fileHash', 'fileHash', { unique: false });
                 }
             };
         });

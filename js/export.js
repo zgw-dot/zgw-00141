@@ -191,6 +191,168 @@ class DataExporter {
         });
     }
 
+    async exportBatches(format = 'csv', startDate = null, endDate = null, status = null, source = null) {
+        let batches = await db.getAll(STORES.BATCHES, 'timestamp');
+        batches.sort((a, b) => b.timestamp - a.timestamp);
+        
+        if (startDate) {
+            const start = new Date(startDate).setHours(0, 0, 0, 0);
+            batches = batches.filter(b => b.timestamp >= start);
+        }
+        
+        if (endDate) {
+            const end = new Date(endDate).setHours(23, 59, 59, 999);
+            batches = batches.filter(b => b.timestamp <= end);
+        }
+        
+        if (status && status !== 'all') {
+            batches = batches.filter(b => b.status === status);
+        }
+        
+        if (source && source !== 'all') {
+            batches = batches.filter(b => b.source === source);
+        }
+
+        const enriched = batches.map(b => ({
+            ...b,
+            formattedDate: formatDate(b.timestamp),
+            statusText: this.getBatchStatusText(b.status),
+            sourceText: b.source ? this.getImportSourceText(b.source) : '未知'
+        }));
+
+        if (format === 'csv') {
+            return this.exportBatchesToCSV(enriched);
+        } else {
+            return this.exportToJSON(enriched);
+        }
+    }
+
+    async exportBatchDetail(batchId, format = 'csv') {
+        const batch = await db.get(STORES.BATCHES, batchId);
+        if (!batch) throw new Error('批次不存在');
+
+        const distributions = await batchEngine.getBatchDistributions(batchId);
+        const conflicts = await batchEngine.getBatchConflicts(batchId);
+        const failedRecords = batch.failedRecords || [];
+
+        const supplies = await db.getAll(STORES.SUPPLIES);
+        const supplyMap = new Map(supplies.map(s => [s.id, s]));
+
+        const enriched = distributions.map(d => ({
+            ...d,
+            supplyName: supplyMap.get(d.supplyId)?.name || '未知物资',
+            formattedDate: formatDate(d.timestamp),
+            statusText: d.revoked ? '已撤销' : (d.rejected ? '已驳回' : this.getStatusText(d.status)),
+            syncedDateText: d.syncedAt ? formatDate(d.syncedAt) : '',
+            importSourceText: d.importSource ? this.getImportSourceText(d.importSource) : '手动录入'
+        }));
+
+        const failedEnriched = failedRecords.map((f, idx) => ({
+            id: `failed_${idx}`,
+            residentName: f.recordData?.residentName || '',
+            supplyName: f.recordData?.supplyName || '',
+            quantity: f.recordData?.quantity || '',
+            formattedDate: formatDate(batch.timestamp),
+            statusText: '导入失败',
+            errorType: f.errorType,
+            errorMessage: f.errorMessage,
+            importSourceText: batch.source ? this.getImportSourceText(batch.source) : '未知'
+        }));
+
+        const allRecords = [...enriched, ...failedEnriched];
+
+        if (format === 'csv') {
+            return this.exportBatchDetailToCSV(allRecords, batch);
+        } else {
+            return this.exportToJSON({
+                batch,
+                distributions: enriched,
+                conflicts,
+                failedRecords
+            });
+        }
+    }
+
+    getBatchStatusText(status) {
+        const map = {
+            [BATCH_STATUS.PROCESSING]: '处理中',
+            [BATCH_STATUS.COMPLETED]: '已完成',
+            [BATCH_STATUS.PARTIAL]: '部分成功',
+            [BATCH_STATUS.REVOKED]: '已撤销'
+        };
+        return map[status] || status;
+    }
+
+    exportBatchesToCSV(data) {
+        const headers = [
+            '批次ID', '文件名', '状态', '来源', '创建人', '创建时间',
+            '总记录数', '成功数', '冲突数', '已撤销数', '文件哈希'
+        ];
+
+        const rows = data.map(d => [
+            d.id,
+            d.fileName,
+            d.statusText,
+            d.sourceText,
+            d.createdBy || '',
+            d.formattedDate,
+            d.totalRecords || 0,
+            d.successCount || 0,
+            d.conflictCount || 0,
+            d.revokedCount || 0,
+            d.fileHash || ''
+        ]);
+
+        const csvContent = [
+            headers.join(','),
+            ...rows.map(row => row.join(','))
+        ].join('\n');
+
+        const BOM = '\uFEFF';
+        return BOM + csvContent;
+    }
+
+    exportBatchDetailToCSV(data, batch) {
+        const headers = [
+            '记录ID', '居民姓名', '物资名称', '领取数量', '领取时间',
+            '状态', '同步时间', '数据来源', '错误类型', '错误信息'
+        ];
+
+        const rows = data.map(d => [
+            d.id,
+            d.residentName || '',
+            d.supplyName || '',
+            d.quantity || '',
+            d.formattedDate,
+            d.statusText,
+            d.syncedDateText || '',
+            d.importSourceText || '',
+            d.errorType || '',
+            (d.errorMessage || '').replace(/,/g, '，').replace(/\n/g, ' ')
+        ]);
+
+        const batchHeader = [
+            `批次号: ${batch.id}`,
+            `文件名: ${batch.fileName}`,
+            `状态: ${this.getBatchStatusText(batch.status)}`,
+            `创建人: ${batch.createdBy || '未知'}`,
+            `创建时间: ${formatDate(batch.timestamp)}`,
+            `成功数: ${batch.successCount || 0}`,
+            `冲突数: ${batch.conflictCount || 0}`,
+            `已撤销数: ${batch.revokedCount || 0}`,
+            '', ''
+        ];
+
+        const csvContent = [
+            batchHeader.join(','),
+            headers.join(','),
+            ...rows.map(row => row.join(','))
+        ].join('\n');
+
+        const BOM = '\uFEFF';
+        return BOM + csvContent;
+    }
+
     async exportAndDownload(type = 'distributions', format = 'csv', startDate = null, endDate = null) {
         let content;
         let filename;
@@ -204,6 +366,9 @@ class DataExporter {
         } else if (type === 'audit') {
             content = await this.exportAuditLogs(format, startDate, endDate);
             filename = `审计日志_${dateStr}.${format}`;
+        } else if (type === 'batches') {
+            content = await this.exportBatches(format, startDate, endDate);
+            filename = `批次列表_${dateStr}.${format}`;
         } else if (type === 'both') {
             const distContent = await this.exportDistributions(format, startDate, endDate);
             const auditContent = await this.exportAuditLogs(format, startDate, endDate);
@@ -220,6 +385,17 @@ class DataExporter {
         }
 
         mimeType = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8';
+        
+        this.downloadFile(content, filename, mimeType);
+        
+        return filename;
+    }
+
+    async exportBatchAndDownload(batchId, format = 'csv') {
+        const content = await this.exportBatchDetail(batchId, format);
+        const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        const filename = `批次详情_${batchId.slice(-8)}_${dateStr}.${format}`;
+        const mimeType = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8';
         
         this.downloadFile(content, filename, mimeType);
         
