@@ -175,6 +175,44 @@ const CURRENT_USER = {
     role: ROLES.VOLUNTEER
 };
 
+const USER_STORAGE_KEY = 'shelter_current_user';
+
+function loadUserFromStorage() {
+    try {
+        const stored = localStorage.getItem(USER_STORAGE_KEY);
+        if (stored) {
+            const data = JSON.parse(stored);
+            CURRENT_USER.id = data.id || 'user_1';
+            CURRENT_USER.name = data.name || '志愿者小王';
+            CURRENT_USER.role = data.role || ROLES.VOLUNTEER;
+        }
+    } catch (e) {
+        console.warn('读取用户信息失败，使用默认身份', e);
+    }
+}
+
+function saveUserToStorage() {
+    try {
+        localStorage.setItem(USER_STORAGE_KEY, JSON.stringify({
+            id: CURRENT_USER.id,
+            name: CURRENT_USER.name,
+            role: CURRENT_USER.role
+        }));
+    } catch (e) {
+        console.warn('保存用户信息失败', e);
+    }
+}
+
+function isAdmin() {
+    return CURRENT_USER.role === ROLES.ADMIN;
+}
+
+const ADMIN_PASSWORD = 'admin123';
+
+function verifyAdminPassword(password) {
+    return password === ADMIN_PASSWORD;
+}
+
 const DISTRIBUTION_STATUS = {
     PENDING: 'pending',
     SYNCED: 'synced',

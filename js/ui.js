@@ -126,10 +126,20 @@ async function refreshRecentList() {
     listEl.innerHTML = recent.map(d => {
         const resident = residentMap.get(d.residentId);
         const supply = supplyMap.get(d.supplyId);
-        const statusClass = d.status === DISTRIBUTION_STATUS.SYNCED ? 'synced' : 
-                          d.status === DISTRIBUTION_STATUS.PENDING ? 'pending' : 'conflicted';
-        const statusText = d.status === DISTRIBUTION_STATUS.SYNCED ? '已同步' : 
-                          d.status === DISTRIBUTION_STATUS.PENDING ? '待同步' : '冲突';
+        let statusClass, statusText;
+        if (d.rejected) {
+            statusClass = 'conflicted';
+            statusText = '已驳回';
+        } else if (d.status === DISTRIBUTION_STATUS.SYNCED) {
+            statusClass = 'synced';
+            statusText = '已同步';
+        } else if (d.status === DISTRIBUTION_STATUS.PENDING) {
+            statusClass = 'pending';
+            statusText = '待同步';
+        } else {
+            statusClass = 'conflicted';
+            statusText = '冲突';
+        }
         
         return `
             <div class="recent-item">
@@ -397,59 +407,6 @@ async function submitDistribution() {
     }
 }
 
-async function refreshConflictsView() {
-    const conflictCounts = await syncEngine.getConflictCounts();
-    
-    document.getElementById('pending-conflicts').textContent = conflictCounts.pending;
-    document.getElementById('resolved-conflicts').textContent = conflictCounts.resolved;
-    document.getElementById('rejected-conflicts').textContent = conflictCounts.rejected;
-    
-    const listEl = document.getElementById('conflict-list');
-    if (!listEl) return;
-    
-    const conflicts = await db.getAll(STORES.CONFLICTS, 'status', IDBKeyRange.only(CONFLICT_STATUS.PENDING));
-    conflicts.sort((a, b) => b.timestamp - a.timestamp);
-    
-    if (conflicts.length === 0) {
-        listEl.innerHTML = `
-            <div class="empty-state">
-                <div class="empty-icon">✅</div>
-                <div class="empty-text">暂无待处理冲突</div>
-            </div>
-        `;
-        return;
-    }
-    
-    const distributions = await db.getAll(STORES.DISTRIBUTIONS);
-    const distMap = new Map(distributions.map(d => [d.id, d]));
-    
-    const typeLabels = {
-        [CONFLICT_TYPES.STOCK_OVERFLOW]: '库存不足',
-        [CONFLICT_TYPES.DUPLICATE_DISTRIBUTION]: '重复领取',
-        [CONFLICT_TYPES.VERSION_CONFLICT]: '数据冲突',
-        [CONFLICT_TYPES.PERMISSION_DENIED]: '权限不足'
-    };
-    
-    listEl.innerHTML = conflicts.map(c => {
-        const dist = distMap.get(c.distributionId);
-        const typeLabel = typeLabels[c.conflictType] || c.conflictType;
-        
-        return `
-            <div class="conflict-item" onclick="openConflictModal('${c.id}')">
-                <div class="conflict-header">
-                    <div class="conflict-title">${dist ? `${dist.residentName} - ${dist.supplyName}` : '未知记录'}</div>
-                    <span class="conflict-type">${typeLabel}</span>
-                </div>
-                <div class="conflict-desc">${getConflictDescription(c)}</div>
-                <div class="conflict-meta">
-                    <span>创建时间: ${formatDate(c.timestamp)}</span>
-                    <span>点击复核 →</span>
-                </div>
-            </div>
-        `;
-    }).join('');
-}
-
 function getConflictDescription(conflict) {
     switch (conflict.conflictType) {
         case CONFLICT_TYPES.STOCK_OVERFLOW:
@@ -624,7 +581,11 @@ async function filterHistory() {
     distributions.sort((a, b) => b.timestamp - a.timestamp);
     
     if (statusFilter !== 'all') {
-        distributions = distributions.filter(d => d.status === statusFilter);
+        if (statusFilter === 'conflicted') {
+            distributions = distributions.filter(d => d.status === DISTRIBUTION_STATUS.CONFLICTED && !d.rejected);
+        } else {
+            distributions = distributions.filter(d => d.status === statusFilter);
+        }
     }
     
     if (supplyFilter !== 'all') {
@@ -649,10 +610,20 @@ async function filterHistory() {
     
     listEl.innerHTML = distributions.map(d => {
         const supply = supplyMap.get(d.supplyId);
-        const statusClass = d.status === DISTRIBUTION_STATUS.SYNCED ? 'synced' : 
-                          d.status === DISTRIBUTION_STATUS.PENDING ? 'pending' : 'conflicted';
-        const statusText = d.status === DISTRIBUTION_STATUS.SYNCED ? '已同步' : 
-                          d.status === DISTRIBUTION_STATUS.PENDING ? '待同步' : '冲突';
+        let statusClass, statusText;
+        if (d.rejected) {
+            statusClass = 'conflicted';
+            statusText = '已驳回';
+        } else if (d.status === DISTRIBUTION_STATUS.SYNCED) {
+            statusClass = 'synced';
+            statusText = '已同步';
+        } else if (d.status === DISTRIBUTION_STATUS.PENDING) {
+            statusClass = 'pending';
+            statusText = '待同步';
+        } else {
+            statusClass = 'conflicted';
+            statusText = '冲突';
+        }
         const sourceBadge = d.importSource 
             ? `<span class="conflict-source" style="background: rgba(6, 182, 212, 0.1); color: var(--info); padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px;">${getImportSourceLabel(d.importSource)}</span>`
             : '';
@@ -911,6 +882,95 @@ async function deleteSupply(supplyId) {
 
 let currentImportData = null;
 let currentValidatedRecords = null;
+let selectedRoleForSwitch = null;
+
+function refreshUserDisplay() {
+    const avatarEl = document.getElementById('user-avatar');
+    const nameEl = document.getElementById('user-name');
+    
+    if (avatarEl && nameEl) {
+        avatarEl.textContent = CURRENT_USER.name.charAt(0);
+        nameEl.textContent = CURRENT_USER.role === ROLES.ADMIN ? '管理员' : '志愿者';
+    }
+}
+
+async function refreshAllViews() {
+    await refreshDashboard();
+    if (currentView === 'distribute') await refreshDistributeView();
+    if (currentView === 'conflicts') await refreshConflictsView();
+    if (currentView === 'history') await refreshHistoryView();
+    if (currentView === 'export') await refreshExportView();
+    if (currentView === 'supplies') await refreshSuppliesView();
+}
+
+function openUserSwitchModal() {
+    selectedRoleForSwitch = null;
+    
+    const userDisplayEl = document.getElementById('current-user-display');
+    const userRoleDisplayEl = document.getElementById('current-user-role-display');
+    
+    if (userDisplayEl) userDisplayEl.textContent = CURRENT_USER.name;
+    if (userRoleDisplayEl) userRoleDisplayEl.textContent = CURRENT_USER.role === ROLES.ADMIN ? '管理员' : '志愿者';
+    
+    updateRoleSelectorUI();
+    
+    document.getElementById('admin-password-section').style.display = 'none';
+    document.getElementById('password-error').style.display = 'none';
+    document.getElementById('admin-password-input').value = '';
+    
+    const modal = document.getElementById('user-switch-modal');
+    if (modal) modal.style.display = 'flex';
+}
+
+function closeUserSwitchModal() {
+    const modal = document.getElementById('user-switch-modal');
+    if (modal) modal.style.display = 'none';
+    selectedRoleForSwitch = null;
+}
+
+function selectRole(role) {
+    selectedRoleForSwitch = role;
+    updateRoleSelectorUI();
+    
+    const passwordSection = document.getElementById('admin-password-section');
+    if (passwordSection) {
+        passwordSection.style.display = role === 'admin' ? 'block' : 'none';
+        document.getElementById('password-error').style.display = 'none';
+    }
+}
+
+function updateRoleSelectorUI() {
+    const volunteerEl = document.getElementById('role-volunteer');
+    const adminEl = document.getElementById('role-admin');
+    const volunteerCheck = document.getElementById('role-check-volunteer');
+    const adminCheck = document.getElementById('role-check-admin');
+    
+    if (volunteerEl && adminEl) {
+        volunteerEl.classList.toggle('selected', selectedRoleForSwitch === 'volunteer' || (!selectedRoleForSwitch && CURRENT_USER.role === ROLES.VOLUNTEER));
+        adminEl.classList.toggle('selected', selectedRoleForSwitch === 'admin' || (!selectedRoleForSwitch && CURRENT_USER.role === ROLES.ADMIN));
+    }
+    if (volunteerCheck && adminCheck) {
+        volunteerCheck.style.visibility = (selectedRoleForSwitch === 'volunteer' || (!selectedRoleForSwitch && CURRENT_USER.role === ROLES.VOLUNTEER)) ? 'visible' : 'hidden';
+        adminCheck.style.visibility = (selectedRoleForSwitch === 'admin' || (!selectedRoleForSwitch && CURRENT_USER.role === ROLES.ADMIN)) ? 'visible' : 'hidden';
+    }
+}
+
+async function confirmUserSwitch() {
+    const targetRole = selectedRoleForSwitch || CURRENT_USER.role;
+    
+    if (targetRole === 'admin') {
+        const password = document.getElementById('admin-password-input').value;
+        if (!verifyAdminPassword(password)) {
+            document.getElementById('password-error').style.display = 'block';
+            return;
+        }
+        await switchToAdmin();
+    } else {
+        await switchToVolunteer();
+    }
+    
+    closeUserSwitchModal();
+}
 
 async function initImportHandlers() {
     const fileInput = document.getElementById('import-file');
@@ -1298,3 +1358,9 @@ window.closeUndoModal = closeUndoModal;
 window.executeUndo = executeUndo;
 window.getConflictTypeLabel = getConflictTypeLabel;
 window.getImportSourceLabel = getImportSourceLabel;
+window.openUserSwitchModal = openUserSwitchModal;
+window.closeUserSwitchModal = closeUserSwitchModal;
+window.selectRole = selectRole;
+window.confirmUserSwitch = confirmUserSwitch;
+window.refreshUserDisplay = refreshUserDisplay;
+window.refreshAllViews = refreshAllViews;

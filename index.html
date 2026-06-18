@@ -12,9 +12,15 @@
         <header class="app-header">
             <div class="header-content">
                 <h1 id="page-title">物资签到</h1>
-                <div class="network-status" id="network-status">
-                    <span class="status-dot"></span>
-                    <span class="status-text" id="network-text">在线</span>
+                <div class="header-right">
+                    <div class="user-status" id="user-status" onclick="openUserSwitchModal()">
+                        <span class="user-avatar" id="user-avatar">志</span>
+                        <span class="user-name" id="user-name">志愿者</span>
+                    </div>
+                    <div class="network-status" id="network-status">
+                        <span class="status-dot"></span>
+                        <span class="status-text" id="network-text">在线</span>
+                    </div>
                 </div>
             </div>
         </header>
@@ -417,6 +423,57 @@
             <div class="modal-footer">
                 <button class="modal-btn reject" onclick="closeSupplyModal()">取消</button>
                 <button class="modal-btn approve" onclick="saveSupply()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal" id="user-switch-modal" style="display: none;">
+        <div class="modal-overlay" onclick="closeUserSwitchModal()"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>身份切换</h3>
+                <button class="modal-close" onclick="closeUserSwitchModal()">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="conflict-detail-section">
+                    <div class="conflict-detail-title">当前身份</div>
+                    <div id="current-user-info" style="padding: 12px; background: var(--bg); border-radius: 8px;">
+                        <div style="font-weight: 600; margin-bottom: 4px;" id="current-user-display">志愿者小王</div>
+                        <div style="font-size: 12px; color: var(--text-secondary);" id="current-user-role-display">志愿者</div>
+                    </div>
+                </div>
+
+                <div class="conflict-detail-section">
+                    <div class="conflict-detail-title">选择身份</div>
+                    <div class="role-selector">
+                        <div class="role-option" id="role-volunteer" onclick="selectRole('volunteer')">
+                            <div class="role-icon">👤</div>
+                            <div class="role-info">
+                                <div class="role-name">志愿者</div>
+                                <div class="role-desc">物资签到、记录查询</div>
+                            </div>
+                            <div class="role-check" id="role-check-volunteer">✓</div>
+                        </div>
+                        <div class="role-option" id="role-admin" onclick="selectRole('admin')">
+                            <div class="role-icon">🛡️</div>
+                            <div class="role-info">
+                                <div class="role-name">管理员</div>
+                                <div class="role-desc">冲突复核、数据审计、撤销操作</div>
+                            </div>
+                            <div class="role-check" id="role-check-admin">✓</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="conflict-detail-section" id="admin-password-section" style="display: none;">
+                    <div class="conflict-detail-title">管理员密码</div>
+                    <input type="password" class="form-input" id="admin-password-input" placeholder="请输入管理员密码 (默认: admin123)">
+                    <div id="password-error" style="color: var(--danger); font-size: 12px; margin-top: 6px; display: none;">密码错误</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-btn reject" onclick="closeUserSwitchModal()">取消</button>
+                <button class="modal-btn approve" onclick="confirmUserSwitch()" id="confirm-user-switch-btn">确认切换</button>
             </div>
         </div>
     </div>

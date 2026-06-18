@@ -711,7 +711,16 @@ class SyncEngine {
         const conflict = await db.get(STORES.CONFLICTS, conflictId);
         if (!conflict) throw new Error('冲突不存在');
 
-        if (CURRENT_USER.role !== ROLES.ADMIN) {
+        let effectiveRole = CURRENT_USER.role;
+        try {
+            const stored = localStorage.getItem(USER_STORAGE_KEY);
+            if (stored) {
+                const data = JSON.parse(stored);
+                effectiveRole = data.role || effectiveRole;
+            }
+        } catch (e) {}
+        
+        if (effectiveRole !== ROLES.ADMIN) {
             throw new Error('只有管理员可以复核冲突');
         }
 
@@ -813,7 +822,16 @@ class SyncEngine {
             throw new Error('没有可撤销的操作');
         }
 
-        if (CURRENT_USER.role !== ROLES.ADMIN) {
+        let effectiveRole = CURRENT_USER.role;
+        try {
+            const stored = localStorage.getItem(USER_STORAGE_KEY);
+            if (stored) {
+                const data = JSON.parse(stored);
+                effectiveRole = data.role || effectiveRole;
+            }
+        } catch (e) {}
+        
+        if (effectiveRole !== ROLES.ADMIN) {
             throw new Error('只有管理员可以撤销操作');
         }
 
@@ -829,19 +847,17 @@ class SyncEngine {
         };
         await db.put(STORES.CONFLICTS, conflictRestored);
 
-        const distRestored = {
-            ...distribution,
-            status: DISTRIBUTION_STATUS.CONFLICTED,
-            syncedAt: null,
-            rejected: false,
-            rejectedReason: null,
-            resolvedBy: null,
-            resolvedByName: null,
-            resolvedAt: null
-        };
-        delete distRestored.rejected;
-        delete distRestored.rejectedReason;
-        await db.put(STORES.DISTRIBUTIONS, distRestored);
+        const cleanDist = {};
+        for (const key of Object.keys(distribution)) {
+            if (key !== 'rejected' && key !== 'rejectedReason' && 
+                key !== 'resolvedBy' && key !== 'resolvedByName' && 
+                key !== 'resolvedAt' && key !== 'syncedAt') {
+                cleanDist[key] = distribution[key];
+            }
+        }
+        cleanDist.status = DISTRIBUTION_STATUS.CONFLICTED;
+        
+        await db.put(STORES.DISTRIBUTIONS, cleanDist);
 
         if (resolution === 'approve' && supplyBefore) {
             await db.put(STORES.SUPPLIES, supplyBefore);
@@ -861,7 +877,7 @@ class SyncEngine {
         const queueItem = {
             id: generateId('queue'),
             action: 'update_distribution',
-            data: distRestored,
+            data: cleanDist,
             status: QUEUE_STATUS.CONFLICTED,
             conflictId: conflict.id,
             timestamp: Date.now(),

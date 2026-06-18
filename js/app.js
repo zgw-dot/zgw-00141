@@ -5,6 +5,7 @@ async function initApp() {
     appInitialized = true;
     
     try {
+        loadUserFromStorage();
         await db.init();
         await initSampleData();
         
@@ -34,6 +35,8 @@ async function initApp() {
         if (typeof initImportHandlers === 'function') {
             await initImportHandlers();
         }
+        
+        refreshUserDisplay();
         
         console.log('App initialized successfully');
         console.log('Current user:', CURRENT_USER.name, '(', CURRENT_USER.role === ROLES.ADMIN ? '管理员' : '志愿者', ')');
@@ -155,6 +158,9 @@ async function createTestScenario() {
 async function switchToAdmin() {
     CURRENT_USER.role = ROLES.ADMIN;
     CURRENT_USER.name = '管理员老李';
+    saveUserToStorage();
+    refreshUserDisplay();
+    await refreshAllViews();
     console.log('已切换到管理员身份');
     showToast('已切换到管理员身份');
 }
@@ -162,6 +168,9 @@ async function switchToAdmin() {
 async function switchToVolunteer() {
     CURRENT_USER.role = ROLES.VOLUNTEER;
     CURRENT_USER.name = '志愿者小王';
+    saveUserToStorage();
+    refreshUserDisplay();
+    await refreshAllViews();
     console.log('已切换到志愿者身份');
     showToast('已切换到志愿者身份');
 }
